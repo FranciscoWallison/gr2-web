@@ -32,9 +32,6 @@
 		
 		window._indices = indices;
 		window._vertices= vertices;
-		
-
-		console.log(indices, vertices, "render")
 
 		var PNT332 = [];
 
@@ -42,8 +39,7 @@
 			PNT332.push(new Float32Array(vertices[index].buffer))			
 		}
 
-		
-		console.log(PNT332);
+
 		// MULTE
 		var geo = new THREE.Geometry();
 		let verticeCount = [];
@@ -55,16 +51,18 @@
 		var uvs = [];
 
 		for (let index = 0; index < verticeCount.length; index++) {
+
 			for(var i = 0; i < verticeCount[index]; i++) {
-				let vx = PNT332[i * (8) + 0];
-				let vy = PNT332[i * (8) + 1];
-				let vz = PNT332[i * (8) + 2];
-				let nx = PNT332[i * (8) + 3];
-				let ny = PNT332[i * (8) + 4];
-				let nz = PNT332[i * (8) + 5];
-				let tx = PNT332[i * (8) + 6];
-				let ty = PNT332[i * (8) + 7];
-				// ADD VÁRIOS
+				
+				let vx = PNT332[index][i * (8) + 0];
+				let vy = PNT332[index][i * (8) + 1];
+				let vz = PNT332[index][i * (8) + 2];
+				let nx = PNT332[index][i * (8) + 3];
+				let ny = PNT332[index][i * (8) + 4];
+				let nz = PNT332[index][i * (8) + 5];
+				let tx = PNT332[index][i * (8) + 6];
+				let ty = PNT332[index][i * (8) + 7];
+						
 				geo.vertices.push(new THREE.Vector3(vx, vy, vz));
 				vertexNormals.push(new THREE.Vector3(nx, ny, nz));
 				uvs.push(new THREE.Vector2(tx, 1.0 - ty));
@@ -96,29 +94,35 @@
 		
 		let faceVertexUvs = [];
 		let faces = [];
+
+		console.log(indices, "indices")
+
 		for (let index = 0; index < indices.length; index++) {
 			
 			for(i = 0; i < indices[index].length / 3; i += 2) { // increment by two because of gravity
 			
-				var a = indices[index][i * 3], b = indices[index][i * 3 + 2], c = indices[index][i * 3 + 4];
+				const a = indices[index][i * 3], b = indices[index][i * 3 + 2], c = indices[index][i * 3 + 4];
 				
-				var face = new THREE.Face3(a, b, c);
+				const face = new THREE.Face3(a, b, c);
 				
 				//face.vertexNormals[0] = vertexNormals[a];
 				//face.vertexNormals[1] = vertexNormals[b];
 				//face.vertexNormals[2] = vertexNormals[c];
-		
-				
+
+
+				geo.faces.push(face);
+				geo.faceVertexUvs[0].push([uvs[a], uvs[b], uvs[c]]);
+
+				console.log("faceVertexUvs", [uvs[a], uvs[b], uvs[c]], face)
 
 				faces.push(face);
 				faceVertexUvs.push([uvs[a], uvs[b], uvs[c]]);
 			}
 		}
 		
-		geo.faces.push(faces);
-		geo.faceVertexUvs[0].push(faceVertexUvs);
-
-		console.log("faceVertexUvs", faceVertexUvs, faces)
+		// geo.faces.push(faces);
+		// geo.faceVertexUvs[0].push(faceVertexUvs);
+	
 
 		geo.computeFaceNormals();
 		geo.computeVertexNormals();
@@ -157,7 +161,7 @@
 			mesh1.push(new THREE.Mesh( geo, material1 ))
 		}
 	
-		//=============================================================================================
+		// TEXTUTA MULTE TESTE 2 ========================================================================
 		const myMaterials = []
 		for (let index = 0; index < model_texture.length; index++)
 		{
@@ -205,11 +209,11 @@
 	
 	
 		for (let index = 0; index < mesh1.length; index++) {
-			// scene.add( mesh1[index])
+			scene.add( mesh1[index])
 			// break;
 		}
 	
-		scene.add( myMesh_TESTE );
+		// scene.add( myMesh_TESTE );
 		// scene.add( myMesh );
 		renderer = new THREE.WebGLRenderer();
 		renderer.setSize( 800, 600 );
@@ -218,7 +222,11 @@
 	
 		(function animate() {
 			requestAnimationFrame(animate);
-			myMesh.rotation.y += 0.01;
+			
+			for (let index = 0; index < mesh1.length; index++) {
+				const element = mesh1[index].rotation.y += 0.01;
+			}
+
 			renderer.render(scene, camera);
 		})();
 		

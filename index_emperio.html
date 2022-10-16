@@ -34,25 +34,24 @@ function render(indices, vertices, model_texture) {
 		
 	var PNT332 = new Float32Array(vertices.buffer);
 	
-	console.log(PNT332);
 	
 	var geo = new THREE.Geometry();
 	var verticeCount = PNT332.length / (3 + 3 + 2);
 	
 	var vertexNormals = [];
 	var uvs = [];
-	
+
 	for(var i = 0; i < verticeCount; i++) {
 		
-		var vx = PNT332[i * (8) + 0];
-		var vy = PNT332[i * (8) + 1];
-		var vz = PNT332[i * (8) + 2];
-		var nx = PNT332[i * (8) + 3];
-		var ny = PNT332[i * (8) + 4];
-		var nz = PNT332[i * (8) + 5];
-		var tx = PNT332[i * (8) + 6];
-		var ty = PNT332[i * (8) + 7];
-		
+		let vx = PNT332[i * (8) + 0];
+		let vy = PNT332[i * (8) + 1];
+		let vz = PNT332[i * (8) + 2];
+		let nx = PNT332[i * (8) + 3];
+		let ny = PNT332[i * (8) + 4];
+		let nz = PNT332[i * (8) + 5];
+		let tx = PNT332[i * (8) + 6];
+		let ty = PNT332[i * (8) + 7];
+
 		geo.vertices.push(new THREE.Vector3(vx, vy, vz));
 		vertexNormals.push(new THREE.Vector3(nx, ny, nz));
 		uvs.push(new THREE.Vector2(tx, 1.0 - ty));
@@ -85,7 +84,7 @@ function render(indices, vertices, model_texture) {
 
 	let faceVertexUvs = [];
 	let faces = [];
-	
+	console.log(indices, "indices")
 	for(i = 0; i < indices.length / 3; i += 2) { // increment by two because of gravity
 	
 		var a = indices[i * 3], b = indices[i * 3 + 2], c = indices[i * 3 + 4];
@@ -106,10 +105,12 @@ function render(indices, vertices, model_texture) {
 
 	// geo.faces.push(faces[0]);
 	// geo.faceVertexUvs[0].push(faceVertexUvs[0]);
-	console.log("faceVertexUvs", faceVertexUvs, faces)
+
 	
 	geo.computeFaceNormals();
 	geo.computeVertexNormals();
+
+	console.log(geo);
 	
 	geo.applyMatrix((new THREE.Matrix4()).set(
 		1, 0, 0, 0,
