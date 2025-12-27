@@ -97,28 +97,47 @@
 
 		console.log(indices, "indices")
 
+		// Process indices - each 3 consecutive indices form a triangle
 		for (let index = 0; index < indices.length; index++) {
-			
-			for(i = 0; i < indices[index].length / 3; i += 2) { // increment by two because of gravity
-			
-				const a = indices[index][i * 3], b = indices[index][i * 3 + 2], c = indices[index][i * 3 + 4];
-				
-				const face = new THREE.Face3(a, b, c);
-				
-				//face.vertexNormals[0] = vertexNormals[a];
-				//face.vertexNormals[1] = vertexNormals[b];
-				//face.vertexNormals[2] = vertexNormals[c];
+			const meshIndices = new Uint16Array(indices[index].buffer);
+			const triangleCount = meshIndices.length / 3;
 
+			console.log(`Mesh ${index}: ${meshIndices.length} indices, ${triangleCount} triangles`);
+
+			for (let i = 0; i < triangleCount; i++) {
+				// Get 3 indices for this triangle
+				const a = meshIndices[i * 3 + 0];
+				const b = meshIndices[i * 3 + 1];
+				const c = meshIndices[i * 3 + 2];
+
+				// Validate indices
+				if (a >= geo.vertices.length || b >= geo.vertices.length || c >= geo.vertices.length) {
+					console.warn(`Invalid triangle indices: ${a}, ${b}, ${c} (max: ${geo.vertices.length})`);
+					continue;
+				}
+
+				const face = new THREE.Face3(a, b, c);
+
+				// Apply vertex normals
+				if (vertexNormals[a] && vertexNormals[b] && vertexNormals[c]) {
+					face.vertexNormals[0] = vertexNormals[a];
+					face.vertexNormals[1] = vertexNormals[b];
+					face.vertexNormals[2] = vertexNormals[c];
+				}
 
 				geo.faces.push(face);
-				geo.faceVertexUvs[0].push([uvs[a], uvs[b], uvs[c]]);
 
-				console.log("faceVertexUvs", [uvs[a], uvs[b], uvs[c]], face)
+				// Apply UV coordinates
+				if (uvs[a] && uvs[b] && uvs[c]) {
+					geo.faceVertexUvs[0].push([uvs[a], uvs[b], uvs[c]]);
+				}
 
 				faces.push(face);
 				faceVertexUvs.push([uvs[a], uvs[b], uvs[c]]);
 			}
 		}
+
+		console.log(`Total faces: ${geo.faces.length}, Total UVs: ${geo.faceVertexUvs[0].length}`);
 		
 		// geo.faces.push(faces);
 		// geo.faceVertexUvs[0].push(faceVertexUvs);

@@ -21,23 +21,44 @@
 	};
 
 	Granny2.structs = {
-	
+
 		'granny_skeleton': [
 			['char*', 'Name', { string: true }],
 			['int', 'BoneCount', {}],
 			['void*', 'Bones', {}]
 		],
-		
+
 		'granny_variant': [
 			['int', 'Type', {}],
 			['int', 'Object', {}],
 		],
-		
+
 		'granny_model_mesh_binding': [
 			//['void*', 'Mesh', {}]
 			['void*', 'Mesh', {}]
 		],
-		
+
+		// Material structure for texture mapping
+		'granny_material': [
+			['char*', 'Name', { string: true }],
+			['int', 'MapCount', {}],
+			['void*', 'Maps', {}],
+			['void*', 'Texture', {}],
+			['int', 'ExtendedData_Variant_Type', {}],
+			['int', 'ExtendedData_Variant_Object', {}],
+		],
+
+		// Material binding links mesh to material
+		'granny_material_binding': [
+			['void*', 'Material', {}]
+		],
+
+		// Material map for texture usage
+		'granny_material_map': [
+			['char*', 'Usage', { string: true }],
+			['void*', 'Material', {}]
+		],
+
 		'granny_mesh': [
 			['char*', 'Name', { string: true }],
 			['void*', 'PrimaryVertexData', {}],
