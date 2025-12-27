@@ -1,0 +1,289 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>GR2 File Renderer - Basic Example</title>
+  <style>
+    body {
+      margin: 0;
+      padding: 0;
+      font-family: Arial, sans-serif;
+      background: #1a1a1a;
+      color: #fff;
+    }
+
+    #container {
+      width: 100%;
+      height: 100vh;
+      display: flex;
+      flex-direction: column;
+    }
+
+    #controls {
+      background: #2a2a2a;
+      padding: 20px;
+      border-bottom: 2px solid #3a3a3a;
+    }
+
+    #controls h1 {
+      margin: 0 0 20px 0;
+      font-size: 24px;
+    }
+
+    #controls button {
+      background: #4a9eff;
+      color: white;
+      border: none;
+      padding: 10px 20px;
+      margin-right: 10px;
+      border-radius: 4px;
+      cursor: pointer;
+      font-size: 14px;
+    }
+
+    #controls button:hover {
+      background: #3a8eef;
+    }
+
+    #controls input[type="file"] {
+      display: none;
+    }
+
+    #info {
+      margin-top: 20px;
+      padding: 10px;
+      background: #333;
+      border-radius: 4px;
+      font-size: 12px;
+      max-height: 200px;
+      overflow-y: auto;
+    }
+
+    #info pre {
+      margin: 0;
+      white-space: pre-wrap;
+      word-wrap: break-word;
+    }
+
+    #render-container {
+      flex: 1;
+      position: relative;
+    }
+
+    #loading {
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      font-size: 18px;
+      display: none;
+    }
+
+    .error {
+      color: #ff4a4a;
+    }
+  </style>
+</head>
+<body>
+  <div id="container">
+    <div id="controls">
+      <h1>🎮 GR2 File Renderer</h1>
+
+      <input type="file" id="fileInput" accept=".gr2" />
+      <button onclick="document.getElementById('fileInput').click()">
+        📁 Load GR2 File
+      </button>
+
+      <button onclick="loadExample('empelium90_0.gr2')">
+        🎨 Load Example 1
+      </button>
+
+      <button onclick="loadExample('guildflag90_1.gr2')">
+        🚩 Load Example 2
+      </button>
+
+      <button onclick="loadExample('kguardian90_7.gr2')">
+        🛡️ Load Example 3
+      </button>
+
+      <button onclick="toggleWireframe()">
+        🔲 Toggle Wireframe
+      </button>
+
+      <button onclick="toggleRotation()">
+        🔄 Toggle Rotation
+      </button>
+
+      <div id="info"></div>
+    </div>
+
+    <div id="render-container">
+      <div id="loading">Loading...</div>
+    </div>
+  </div>
+
+  <script type="module">
+    import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js';
+    import { OrbitControls } from 'https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/controls/OrbitControls.js';
+
+    // Import our library (in production, this would be from npm package)
+    import { loadGR2File, loadGR2FromFile, GR2Renderer } from '../dist/index.js';
+
+    let scene, camera, renderer, controls, gr2Renderer;
+    let isRotating = false;
+    let isWireframe = false;
+
+    function init() {
+      // Create scene
+      scene = new THREE.Scene();
+      scene.background = new THREE.Color(0x1a1a1a);
+
+      // Create camera
+      camera = new THREE.PerspectiveCamera(
+        45,
+        window.innerWidth / (window.innerHeight - 200),
+        1,
+        10000
+      );
+      camera.position.set(25, 35, 25);
+
+      // Create renderer
+      const container = document.getElementById('render-container');
+      renderer = new THREE.WebGLRenderer({ antialias: true });
+      renderer.setSize(container.clientWidth, container.clientHeight);
+      container.appendChild(renderer.domElement);
+
+      // Add controls
+      controls = new OrbitControls(camera, renderer.domElement);
+      controls.target.set(0, 10, 0);
+      controls.update();
+
+      // Add helpers
+      const axesHelper = new THREE.AxesHelper(100);
+      scene.add(axesHelper);
+
+      const gridHelper = new THREE.GridHelper(100, 10);
+      scene.add(gridHelper);
+
+      // Handle window resize
+      window.addEventListener('resize', onWindowResize);
+
+      // Start animation loop
+      animate();
+
+      showInfo('Ready! Load a .gr2 file to begin.');
+    }
+
+    function animate() {
+      requestAnimationFrame(animate);
+
+      if (gr2Renderer && isRotating) {
+        gr2Renderer.update(0.01);
+      }
+
+      controls.update();
+      renderer.render(scene, camera);
+    }
+
+    function onWindowResize() {
+      const container = document.getElementById('render-container');
+      camera.aspect = container.clientWidth / container.clientHeight;
+      camera.updateProjectionMatrix();
+      renderer.setSize(container.clientWidth, container.clientHeight);
+    }
+
+    async function loadGR2(source) {
+      const loading = document.getElementById('loading');
+      loading.style.display = 'block';
+
+      try {
+        showInfo('Loading GR2 file...');
+
+        let gr2File;
+        if (typeof source === 'string') {
+          gr2File = await loadGR2File(source);
+        } else {
+          gr2File = await loadGR2FromFile(source);
+        }
+
+        showInfo('Parsing GR2 file...');
+
+        // Clean up previous render
+        if (gr2Renderer) {
+          gr2Renderer.dispose();
+        }
+
+        // Create new renderer
+        gr2Renderer = new GR2Renderer({
+          scene: scene,
+          autoRotate: isRotating,
+          wireframe: isWireframe,
+          lights: true
+        });
+
+        showInfo('Rendering 3D model...');
+
+        // Render the model
+        gr2Renderer.render(gr2File);
+
+        // Display file info
+        const info = {
+          models: gr2File.fileInfo.models.length,
+          meshes: gr2File.fileInfo.meshes.length,
+          textures: gr2File.fileInfo.textures.length,
+          skeletons: gr2File.fileInfo.skeletons.length,
+        };
+
+        showInfo(`✅ Loaded successfully!\n${JSON.stringify(info, null, 2)}`);
+
+        // Reset camera
+        controls.target.set(0, 10, 0);
+        camera.position.set(25, 35, 25);
+        controls.update();
+
+      } catch (error) {
+        showInfo(`❌ Error: ${error.message}`, true);
+        console.error(error);
+      } finally {
+        loading.style.display = 'none';
+      }
+    }
+
+    function showInfo(message, isError = false) {
+      const info = document.getElementById('info');
+      info.innerHTML = `<pre class="${isError ? 'error' : ''}">${message}</pre>`;
+    }
+
+    window.loadExample = (filename) => {
+      loadGR2(`../../${filename}`);
+    };
+
+    window.toggleWireframe = () => {
+      isWireframe = !isWireframe;
+      if (gr2Renderer) {
+        gr2Renderer.getGroup().traverse((object) => {
+          if (object.material) {
+            object.material.wireframe = isWireframe;
+          }
+        });
+      }
+    };
+
+    window.toggleRotation = () => {
+      isRotating = !isRotating;
+    };
+
+    // File input handler
+    document.getElementById('fileInput').addEventListener('change', (event) => {
+      const file = event.target.files[0];
+      if (file) {
+        loadGR2(file);
+      }
+    });
+
+    // Initialize on load
+    init();
+  </script>
+</body>
+</html>
