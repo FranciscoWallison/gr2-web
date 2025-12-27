@@ -12,8 +12,12 @@ export { BinaryReader } from './utils/BinaryReader';
 // Type exports
 export * from './types/structures';
 
+// Import for use in functions
+import { GR2Parser } from './parser/GR2Parser';
+import type { GR2File } from './types/structures';
+
 // Convenience function to load and parse a GR2 file
-export async function loadGR2File(url: string): Promise<import('./types/structures').GR2File> {
+export async function loadGR2File(url: string): Promise<GR2File> {
   const response = await fetch(url);
   if (!response.ok) {
     throw new Error(`Failed to load GR2 file: ${response.statusText}`);
@@ -24,7 +28,7 @@ export async function loadGR2File(url: string): Promise<import('./types/structur
 }
 
 // Convenience function to load from file input
-export function loadGR2FromFile(file: File): Promise<import('./types/structures').GR2File> {
+export function loadGR2FromFile(file: File): Promise<GR2File> {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
 

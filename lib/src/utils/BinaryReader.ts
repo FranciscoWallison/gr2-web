@@ -150,7 +150,7 @@ export class BinaryReader {
   }
 
   createSubReader(offset: number, length: number): BinaryReader {
-    const subBuffer = this.view.buffer.slice(offset, offset + length);
+    const subBuffer = this.view.buffer.slice(offset, offset + length) as ArrayBuffer;
     return new BinaryReader(subBuffer, 0, this.littleEndian);
   }
 }
