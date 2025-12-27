@@ -126,7 +126,7 @@ export class GR2Parser {
       mainSection.compression as GR2CompressionType
     );
 
-    const dataReader = new BinaryReader(decompressedData.buffer);
+    const dataReader = new BinaryReader(decompressedData.buffer as ArrayBuffer);
 
     return this.parseFileInfoStructure(dataReader, sections);
   }

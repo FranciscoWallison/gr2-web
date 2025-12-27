@@ -283,7 +283,7 @@ export class GR2Renderer {
   }
 
   dispose(): void {
-    this.group.traverse((object) => {
+    this.group.traverse((object: THREE.Object3D) => {
       if (object instanceof THREE.Mesh) {
         object.geometry.dispose();
         if (object.material instanceof THREE.Material) {
