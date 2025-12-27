@@ -1,5 +1,6 @@
 <!DOCTYPE html>
 <html lang="en">
+
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -83,7 +84,7 @@
       left: 50%;
       transform: translate(-50%, -50%);
       font-size: 18px;
-      background: rgba(0,0,0,0.8);
+      background: rgba(0, 0, 0, 0.8);
       padding: 20px;
       border-radius: 8px;
       display: none;
@@ -98,6 +99,7 @@
     }
   </style>
 </head>
+
 <body>
   <div id="container">
     <div id="controls">
@@ -120,6 +122,14 @@
         🛡️ kguardian90_7.gr2
       </button>
 
+      <button id="sguardian90_9">
+        🛡️ sguardian90_9.gr2
+      </button>
+
+      <button id="treasurebox_2">
+        🛡️ treasurebox_2.gr2
+      </button>
+
       <button id="toggleWireframeBtn">
         🔲 Toggle Wireframe
       </button>
@@ -137,17 +147,17 @@
   </div>
 
   <!-- Load dependencies from parent directory -->
-  <script src="../../three.min.js"></script>
-  <script src="../../const.js"></script>
-  <script src="../../main.js"></script>
-  <script src="../../memory.js"></script>
-  <script src="../../io.js"></script>
-  <script src="../../v86.js"></script>
-  <script src="../../fpu.js"></script>
-  <script src="../../granny2.js"></script>
-  <script src="../../granny2.subs.js"></script>
-  <script src="../../granny2.def.js"></script>
-  <script src="../../pe_env.js"></script>
+  <script src="./three.min.js"></script>
+  <script src="./const.js"></script>
+  <script src="./main.js"></script>
+  <script src="./memory.js"></script>
+  <script src="./io.js"></script>
+  <script src="./v86.js"></script>
+  <script src="./fpu.js"></script>
+  <script src="./granny2.js"></script>
+  <script src="./granny2.subs.js"></script>
+  <script src="./granny2.def.js"></script>
+  <script src="./pe_env.js"></script>
 
   <script>
     // Global state
@@ -248,7 +258,7 @@
     async function loadGranny2Binary() {
       try {
         showInfo('Loading granny2.bin...');
-        const response = await fetch('../../granny2.bin');
+        const response = await fetch('./granny2.bin');
         if (!response.ok) {
           throw new Error('Failed to load granny2.bin');
         }
@@ -272,15 +282,23 @@
       });
 
       document.getElementById('loadExample1Btn').addEventListener('click', () => {
-        loadGR2FromURL('../../empelium90_0.gr2');
+        loadGR2FromURL('./empelium90_0.gr2');
       });
 
       document.getElementById('loadExample2Btn').addEventListener('click', () => {
-        loadGR2FromURL('../../guildflag90_1.gr2');
+        loadGR2FromURL('./guildflag90_1.gr2');
       });
 
       document.getElementById('loadExample3Btn').addEventListener('click', () => {
-        loadGR2FromURL('../../kguardian90_7.gr2');
+        loadGR2FromURL('./kguardian90_7.gr2');
+      });
+
+      document.getElementById('sguardian90_9').addEventListener('click', () => {
+        loadGR2FromURL('./sguardian90_9.gr2');
+      });
+
+      document.getElementById('treasurebox_2').addEventListener('click', () => {
+        loadGR2FromURL('./treasurebox_2.gr2');
       });
 
       document.getElementById('toggleWireframeBtn').addEventListener('click', () => {
@@ -552,4 +570,5 @@
     init();
   </script>
 </body>
+
 </html>
