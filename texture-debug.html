@@ -397,28 +397,87 @@
 
       // First, analyze Materials in fileInfo
       Logger.info(`--- Materials in FileInfo: ${fileInfo.MaterialCount} ---`);
-      const materialsMap = new Map();
+      const materialsMap = new Map();       // ptr -> matInfo
+      const materialToTexture = new Map();  // matPtr -> textureIndex
 
       if (fileInfo.Materials && fileInfo.MaterialCount > 0) {
+        // First pass: read all materials
         for (let m = 0; m < fileInfo.MaterialCount; m++) {
           const matPtr = gr2.runtime.get_dword_ptr(fileInfo.Materials + 4 * m);
           try {
             const matInfo = Granny2.readStructure(gr2.runtime.cpu, matPtr, Granny2.structs.granny_material);
+            matInfo._ptr = matPtr;
             Logger.info(`  Material ${m}: ${matInfo.Name || 'unnamed'}`);
             Logger.info(`    MapCount: ${matInfo.MapCount}`);
             Logger.info(`    Texture ptr: 0x${(matInfo.Texture || 0).toString(16)}`);
+            Logger.info(`    Maps ptr: 0x${(matInfo.Maps || 0).toString(16)}`);
             materialsMap.set(matPtr, matInfo);
 
-            // Find matching texture
-            for (let t = 0; t < textureData.textures.length; t++) {
-              if (textureData.textures[t].ptr === matInfo.Texture) {
-                Logger.success(`    -> Linked to Texture ${t}: ${textureData.textures[t].info.FromFileName}`);
+            // Direct texture link
+            if (matInfo.Texture) {
+              for (let t = 0; t < textureData.textures.length; t++) {
+                if (textureData.textures[t].ptr === matInfo.Texture) {
+                  Logger.success(`    -> Direct Texture ${t}: ${textureData.textures[t].info.FromFileName}`);
+                  materialToTexture.set(matPtr, t);
+                  break;
+                }
               }
             }
           } catch (e) {
             Logger.warn(`  Material ${m}: Failed to read (ptr: 0x${matPtr.toString(16)})`);
           }
         }
+
+        // Second pass: resolve Maps for materials without direct texture
+        Logger.info(`--- Resolving Material Maps ---`);
+        for (const [matPtr, matInfo] of materialsMap) {
+          if (materialToTexture.has(matPtr)) continue; // Already has texture
+
+          if (matInfo.MapCount > 0 && matInfo.Maps) {
+            Logger.info(`  Resolving maps for: ${matInfo.Name}`);
+            for (let mapIdx = 0; mapIdx < matInfo.MapCount; mapIdx++) {
+              // granny_material_map is 8 bytes: char* Usage (4) + void* Material (4)
+              const mapPtr = matInfo.Maps + mapIdx * 8;
+              const usagePtr = gr2.runtime.get_dword_ptr(mapPtr);
+              const refMatPtr = gr2.runtime.get_dword_ptr(mapPtr + 4);
+
+              let usage = 'unknown';
+              try {
+                usage = gr2.runtime.cpu.memory.read_string(
+                  gr2.runtime.cpu.translate_address_read(usagePtr)
+                );
+              } catch(e) {}
+
+              Logger.info(`    Map ${mapIdx}: Usage="${usage}", RefMaterial=0x${refMatPtr.toString(16)}`);
+
+              // Check if referenced material has a texture
+              if (materialsMap.has(refMatPtr)) {
+                const refMat = materialsMap.get(refMatPtr);
+                if (materialToTexture.has(refMatPtr)) {
+                  const texIdx = materialToTexture.get(refMatPtr);
+                  materialToTexture.set(matPtr, texIdx);
+                  Logger.success(`    -> Resolved via ${refMat.Name} to Texture ${texIdx}`);
+                  break;
+                }
+              }
+            }
+          }
+        }
+
+        // Log final material->texture mapping
+        Logger.info(`--- Final Material->Texture Mapping ---`);
+        for (const [matPtr, matInfo] of materialsMap) {
+          const texIdx = materialToTexture.has(matPtr) ? materialToTexture.get(matPtr) : 'NONE';
+          Logger.info(`  ${matInfo.Name} -> Texture ${texIdx}`);
+        }
+      }
+
+      // Helper function to get texture index for a material
+      function getTextureForMaterial(matPtr) {
+        if (materialToTexture.has(matPtr)) {
+          return materialToTexture.get(matPtr);
+        }
+        return -1; // No texture found
       }
 
       for (let i = 0; i < fileInfo.ModelCount; i++) {
@@ -448,28 +507,32 @@
           Logger.mesh(`    BoneBindingsCount: ${mesh.BoneBindingsCount}`);
 
           // Analyze Material Bindings for this mesh
-          let meshTextureIndex = 0; // Default
+          let meshTextureIndex = -1; // -1 = not found
           if (mesh.MaterialBindings && mesh.MaterialsBindingCount > 0) {
             Logger.texture(`    --- Material Bindings ---`);
             for (let mb = 0; mb < mesh.MaterialsBindingCount; mb++) {
               const matBindPtr = gr2.runtime.get_dword_ptr(mesh.MaterialBindings + 4 * mb);
               Logger.texture(`      Binding ${mb}: Material ptr 0x${matBindPtr.toString(16)}`);
 
-              // Check if this material is linked to a texture
-              if (materialsMap.has(matBindPtr)) {
+              // Use resolved material->texture mapping
+              const texIdx = getTextureForMaterial(matBindPtr);
+              if (texIdx >= 0) {
                 const mat = materialsMap.get(matBindPtr);
-                Logger.texture(`        Material: ${mat.Name}`);
-
-                // Find texture for this material
-                for (let t = 0; t < textureData.textures.length; t++) {
-                  if (textureData.textures[t].ptr === mat.Texture) {
-                    Logger.success(`        -> USE Texture ${t} for this mesh!`);
-                    meshTextureIndex = t;
-                    break;
-                  }
+                Logger.success(`        Material: ${mat ? mat.Name : 'unknown'} -> Texture ${texIdx}`);
+                if (meshTextureIndex < 0) {
+                  meshTextureIndex = texIdx;
                 }
+              } else if (materialsMap.has(matBindPtr)) {
+                const mat = materialsMap.get(matBindPtr);
+                Logger.warn(`        Material: ${mat.Name} -> NO TEXTURE FOUND`);
               }
             }
+          }
+
+          // Fallback to texture 0 if nothing found
+          if (meshTextureIndex < 0 && textureData.textures.length > 0) {
+            Logger.warn(`    No texture resolved, falling back to texture 0`);
+            meshTextureIndex = 0;
           }
 
           // Get vertices
@@ -603,11 +666,14 @@
         let material;
         if (textures.length > 0) {
           // Use texture index from material binding analysis
-          const textureIndex = meshInfo.textureIndex !== undefined
-            ? Math.min(meshInfo.textureIndex, textures.length - 1)
-            : Math.min(index, textures.length - 1);
-
-          Logger.info(`  Using texture ${textureIndex} for mesh ${index} (from material binding: ${meshInfo.textureIndex !== undefined})`);
+          let textureIndex = 0;
+          if (meshInfo.textureIndex !== undefined && meshInfo.textureIndex >= 0) {
+            textureIndex = Math.min(meshInfo.textureIndex, textures.length - 1);
+            Logger.info(`  Using texture ${textureIndex} for mesh ${index} (resolved from material binding)`);
+          } else {
+            textureIndex = Math.min(index, textures.length - 1);
+            Logger.warn(`  FALLBACK: Using texture ${textureIndex} for mesh ${index} (no material binding found)`);
+          }
 
           material = new THREE.MeshLambertMaterial({
             map: textures[textureIndex].threeTexture,
