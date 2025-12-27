@@ -1,0 +1,633 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>GR2 Animation Player - Stop/Attack/Damage/Dead/Move</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      font-family: 'Consolas', monospace;
+      background: #0a0a1a;
+      color: #eee;
+      display: flex;
+      height: 100vh;
+    }
+    #sidebar {
+      width: 350px;
+      background: #12122a;
+      padding: 15px;
+      overflow-y: auto;
+      border-right: 2px solid #2a2a5a;
+    }
+    #render-area {
+      flex: 1;
+      position: relative;
+    }
+    h1 { font-size: 18px; margin-bottom: 15px; color: #6af; }
+    h2 { font-size: 14px; margin: 15px 0 10px; color: #fa6; }
+
+    .btn {
+      background: #4a6aff;
+      color: white;
+      border: none;
+      padding: 10px 15px;
+      margin: 3px;
+      border-radius: 4px;
+      cursor: pointer;
+      font-size: 12px;
+      transition: all 0.2s;
+    }
+    .btn:hover { background: #6a8aff; transform: scale(1.02); }
+    .btn:disabled { background: #333; cursor: not-allowed; }
+    .btn.active { background: #fa6a30; box-shadow: 0 0 10px #fa6a30; }
+
+    .state-btn {
+      width: 100%;
+      padding: 15px;
+      font-size: 16px;
+      margin: 5px 0;
+      text-align: left;
+    }
+    .state-btn.Stop { background: #2a6a2a; }
+    .state-btn.Stop:hover, .state-btn.Stop.active { background: #3a8a3a; }
+    .state-btn.Attackout { background: #8a2a2a; }
+    .state-btn.Attackout:hover, .state-btn.Attackout.active { background: #aa4a4a; }
+    .state-btn.Damageout { background: #8a6a2a; }
+    .state-btn.Damageout:hover, .state-btn.Damageout.active { background: #aa8a4a; }
+    .state-btn.Deadout { background: #4a2a6a; }
+    .state-btn.Deadout:hover, .state-btn.Deadout.active { background: #6a4a8a; }
+    .state-btn.Moveout { background: #2a4a8a; }
+    .state-btn.Moveout:hover, .state-btn.Moveout.active { background: #4a6aaa; }
+
+    #log {
+      background: #0a0a1a;
+      padding: 10px;
+      font-size: 11px;
+      max-height: 200px;
+      overflow-y: auto;
+      border-radius: 4px;
+      margin-top: 10px;
+      border: 1px solid #2a2a5a;
+    }
+    .log-info { color: #6af; }
+    .log-warn { color: #fa6; }
+    .log-error { color: #f66; }
+    .log-success { color: #6f6; }
+    .log-anim { color: #f6a; }
+
+    #state-display {
+      background: #1a1a3a;
+      padding: 15px;
+      border-radius: 8px;
+      margin: 10px 0;
+      text-align: center;
+    }
+    #current-state {
+      font-size: 24px;
+      font-weight: bold;
+      color: #6f6;
+    }
+    #anim-progress {
+      width: 100%;
+      height: 10px;
+      background: #333;
+      border-radius: 5px;
+      margin-top: 10px;
+      overflow: hidden;
+    }
+    #anim-progress-bar {
+      height: 100%;
+      background: linear-gradient(90deg, #4af, #6f6);
+      width: 0%;
+      transition: width 0.05s;
+    }
+
+    .file-section {
+      background: #1a1a2a;
+      padding: 10px;
+      border-radius: 4px;
+      margin: 10px 0;
+    }
+
+    #rotation-slider {
+      width: 100%;
+      margin: 10px 0;
+    }
+  </style>
+</head>
+<body>
+  <div id="sidebar">
+    <h1>GR2 Animation Player</h1>
+
+    <div class="file-section">
+      <h2>Load Model</h2>
+      <button class="btn" onclick="loadModel('kguardian90_7.gr2')">kguardian90_7</button>
+      <button class="btn" onclick="loadModel('empelium90_0.gr2')">empelium90_0</button>
+      <button class="btn" onclick="loadModel('guildflag90_1.gr2')">guildflag90_1</button>
+    </div>
+
+    <div id="state-display">
+      <div>Current State:</div>
+      <div id="current-state">IDLE</div>
+      <div id="anim-progress">
+        <div id="anim-progress-bar"></div>
+      </div>
+      <div id="anim-time" style="font-size:11px;margin-top:5px;">0.00s / 0.00s</div>
+    </div>
+
+    <h2>Animation States</h2>
+    <button class="btn state-btn Stop active" onclick="setState('Stop')">
+      ⏹️ STOP (Idle)
+    </button>
+    <button class="btn state-btn Attackout" onclick="setState('Attackout')">
+      ⚔️ ATTACK
+    </button>
+    <button class="btn state-btn Damageout" onclick="setState('Damageout')">
+      💥 DAMAGE
+    </button>
+    <button class="btn state-btn Deadout" onclick="setState('Deadout')">
+      💀 DEAD
+    </button>
+    <button class="btn state-btn Moveout" onclick="setState('Moveout')">
+      🏃 MOVE
+    </button>
+
+    <h2>Controls</h2>
+    <div>
+      <label>Rotation Speed:</label>
+      <input type="range" id="rotation-slider" min="0" max="100" value="50">
+    </div>
+    <button class="btn" id="btnRotate" onclick="toggleRotation()">Auto-Rotate: ON</button>
+    <button class="btn" onclick="resetCamera()">Reset Camera</button>
+
+    <h2>Debug Log</h2>
+    <div id="log"></div>
+  </div>
+
+  <div id="render-area"></div>
+
+  <script src="three.min.js"></script>
+  <script src="const.js"></script>
+  <script src="main.js"></script>
+  <script src="memory.js"></script>
+  <script src="io.js"></script>
+  <script src="v86.js"></script>
+  <script src="fpu.js"></script>
+  <script src="granny2.js"></script>
+  <script src="granny2.subs.js"></script>
+  <script src="granny2.def.js"></script>
+  <script src="pe_env.js"></script>
+
+  <script>
+    // ============================================
+    // ANIMATION STATE MACHINE
+    // ============================================
+    const AnimationStates = {
+      Stop: {
+        name: 'Stop',
+        loop: true,
+        rotationSpeed: 0,
+        color: 0x2a6a2a
+      },
+      Attackout: {
+        name: 'Attackout',
+        loop: false,
+        rotationSpeed: 0.02,
+        color: 0x8a2a2a,
+        nextState: 'Stop'
+      },
+      Damageout: {
+        name: 'Damageout',
+        loop: false,
+        rotationSpeed: 0.01,
+        color: 0x8a6a2a,
+        nextState: 'Stop'
+      },
+      Deadout: {
+        name: 'Deadout',
+        loop: false,
+        rotationSpeed: 0,
+        color: 0x4a2a6a,
+        nextState: null // Stay dead
+      },
+      Moveout: {
+        name: 'Moveout',
+        loop: true,
+        rotationSpeed: 0.03,
+        color: 0x2a4a8a
+      }
+    };
+
+    // ============================================
+    // GLOBAL STATE
+    // ============================================
+    let scene, camera, renderer;
+    let currentModel = null;
+    let granny2Binary = null;
+    let gr2Instance = null;
+
+    let currentState = 'Stop';
+    let animationTime = 0;
+    let animationDuration = 2.0; // Default 2 seconds per state
+    let isAutoRotating = true;
+    let rotationSpeed = 0.01;
+    let lastFrameTime = 0;
+
+    // Animation simulation (since actual GR2 animations need bone transforms)
+    let stateAnimations = {
+      Stop: { duration: 2.0, scaleOscillate: 0.02 },
+      Attackout: { duration: 0.8, scaleOscillate: 0.1, rotateY: 0.5 },
+      Damageout: { duration: 0.5, shakeAmount: 0.1 },
+      Deadout: { duration: 1.5, fallRotation: Math.PI / 2 },
+      Moveout: { duration: 1.0, bounceAmount: 0.05 }
+    };
+
+    // ============================================
+    // LOGGING
+    // ============================================
+    function log(msg, type = 'info') {
+      const logEl = document.getElementById('log');
+      const time = new Date().toLocaleTimeString();
+      const div = document.createElement('div');
+      div.className = 'log-' + type;
+      div.textContent = `[${time}] ${msg}`;
+      logEl.insertBefore(div, logEl.firstChild);
+      if (logEl.children.length > 50) logEl.removeChild(logEl.lastChild);
+      console.log(`[${type}]`, msg);
+    }
+
+    // ============================================
+    // INITIALIZATION
+    // ============================================
+    function init() {
+      log('Initializing Animation Player...', 'info');
+
+      scene = new THREE.Scene();
+      scene.background = new THREE.Color(0x0a0a1a);
+
+      const container = document.getElementById('render-area');
+      camera = new THREE.PerspectiveCamera(45, container.clientWidth / container.clientHeight, 1, 10000);
+      camera.position.set(30, 40, 30);
+      camera.lookAt(new THREE.Vector3(0, 10, 0));
+
+      renderer = new THREE.WebGLRenderer({ antialias: true });
+      renderer.setSize(container.clientWidth, container.clientHeight);
+      container.appendChild(renderer.domElement);
+
+      // Lights
+      scene.add(new THREE.AmbientLight(0x404040, 1.5));
+      const directional = new THREE.DirectionalLight(0xffffff, 0.8);
+      directional.position.set(10, 30, 20);
+      scene.add(directional);
+
+      const directional2 = new THREE.DirectionalLight(0x4466ff, 0.4);
+      directional2.position.set(-10, 20, -20);
+      scene.add(directional2);
+
+      // Grid
+      scene.add(new THREE.GridHelper(100, 20, 0x444444, 0x222222));
+
+      // Controls
+      setupMouseControls();
+      window.addEventListener('resize', onWindowResize);
+
+      document.getElementById('rotation-slider').addEventListener('input', (e) => {
+        rotationSpeed = e.target.value / 5000;
+      });
+
+      // Start animation loop
+      lastFrameTime = performance.now();
+      animate();
+
+      // Load granny2.bin
+      loadGranny2Binary();
+    }
+
+    function setupMouseControls() {
+      let isDragging = false;
+      let previousMouse = { x: 0, y: 0 };
+
+      renderer.domElement.addEventListener('mousedown', () => isDragging = true);
+      renderer.domElement.addEventListener('mouseup', () => isDragging = false);
+      renderer.domElement.addEventListener('mouseleave', () => isDragging = false);
+
+      renderer.domElement.addEventListener('mousemove', (e) => {
+        if (isDragging && currentModel) {
+          currentModel.rotation.y += (e.offsetX - previousMouse.x) * 0.01;
+          currentModel.rotation.x += (e.offsetY - previousMouse.y) * 0.01;
+        }
+        previousMouse = { x: e.offsetX, y: e.offsetY };
+      });
+
+      renderer.domElement.addEventListener('wheel', (e) => {
+        e.preventDefault();
+        camera.position.multiplyScalar(1 + e.deltaY * 0.001);
+      });
+    }
+
+    async function loadGranny2Binary() {
+      try {
+        log('Loading granny2.bin...', 'info');
+        const response = await fetch('granny2.bin');
+        granny2Binary = await response.arrayBuffer();
+        log('granny2.bin ready!', 'success');
+      } catch (error) {
+        log('Failed to load granny2.bin: ' + error.message, 'error');
+      }
+    }
+
+    // ============================================
+    // MODEL LOADING
+    // ============================================
+    async function loadModel(filename) {
+      if (!granny2Binary) {
+        log('granny2.bin not loaded!', 'error');
+        return;
+      }
+
+      try {
+        log(`Loading model: ${filename}`, 'info');
+
+        const response = await fetch(filename);
+        const arrayBuffer = await response.arrayBuffer();
+
+        const gr2 = new Granny2(granny2Binary);
+        gr2Instance = gr2;
+
+        const grannyFilePtr = gr2.ReadEntireFileFromMemory(arrayBuffer);
+        const fileInfoPtr = gr2.GetFileInfo(grannyFilePtr);
+        const fileInfo = Granny2.readStructure(gr2.runtime.cpu, fileInfoPtr, Granny2.structs.granny_file_info);
+
+        log(`Models: ${fileInfo.ModelCount}, Meshes: ${fileInfo.MeshCount}, Textures: ${fileInfo.TextureCount}`, 'info');
+        log(`Animations: ${fileInfo.AnimationCount}, TrackGroups: ${fileInfo.TrackGroupCount}`, 'anim');
+
+        // Extract textures
+        const textures = extractTextures(gr2, fileInfo);
+
+        // Extract mesh data
+        const meshData = extractMeshData(gr2, fileInfo);
+
+        // Render
+        renderModel(meshData, textures);
+
+        log(`Model loaded with ${meshData.length} meshes`, 'success');
+        setState('Stop');
+
+      } catch (error) {
+        log('Error: ' + error.message, 'error');
+        console.error(error);
+      }
+    }
+
+    function extractTextures(gr2, fileInfo) {
+      const textures = [];
+
+      for (let i = 0; i < fileInfo.TextureCount; i++) {
+        const texturePtr = gr2.runtime.get_dword_ptr(fileInfo.Textures + 4 * i);
+        const textureInfo = Granny2.readStructure(gr2.runtime.cpu, texturePtr, Granny2.structs.granny_texture);
+        const pixelData = gr2.CopyTextureImage(texturePtr);
+
+        const canvas = document.createElement('canvas');
+        canvas.width = textureInfo.Width;
+        canvas.height = textureInfo.Height;
+        const ctx = canvas.getContext('2d');
+        const imageData = ctx.createImageData(textureInfo.Width, textureInfo.Height);
+        imageData.data.set(pixelData);
+        ctx.putImageData(imageData, 0, 0);
+
+        const texture = new THREE.CanvasTexture(canvas);
+        texture.needsUpdate = true;
+        textures.push(texture);
+      }
+
+      return textures;
+    }
+
+    function extractMeshData(gr2, fileInfo) {
+      const meshData = [];
+
+      for (let i = 0; i < fileInfo.ModelCount; i++) {
+        const model = fileInfo.Models[i];
+
+        for (let j = 0; j < model.MeshBindingsCount; j++) {
+          const meshPtr = model.MeshBindings[j]._ptr;
+          let mesh = fileInfo.Meshes.find(m => m._ptr === meshPtr);
+          if (!mesh) continue;
+
+          const vertices = gr2.CopyMeshVertices(mesh._ptr);
+          const indices = gr2.CopyMeshIndices(mesh._ptr);
+          const vertexCount = gr2.GetMeshVertexCount(mesh._ptr);
+
+          meshData.push({
+            name: mesh.Name || `Mesh_${j}`,
+            vertices: new Uint8Array(vertices),
+            indices: new Uint16Array(indices.buffer),
+            vertexCount
+          });
+        }
+      }
+
+      return meshData;
+    }
+
+    function renderModel(meshData, textures) {
+      if (currentModel) {
+        scene.remove(currentModel);
+      }
+
+      currentModel = new THREE.Group();
+      currentModel.userData.originalScale = new THREE.Vector3(1, 1, 1);
+      currentModel.userData.originalRotation = new THREE.Euler(0, 0, 0);
+      currentModel.userData.originalPosition = new THREE.Vector3(0, 0, 0);
+
+      meshData.forEach((meshInfo, index) => {
+        const geometry = new THREE.BufferGeometry();
+        const floats = new Float32Array(meshInfo.vertices.buffer);
+
+        const positions = [], normals = [], uvs = [];
+
+        for (let i = 0; i < meshInfo.vertexCount; i++) {
+          const offset = i * 8;
+          positions.push(floats[offset], floats[offset + 1], floats[offset + 2]);
+          normals.push(floats[offset + 3], floats[offset + 4], floats[offset + 5]);
+          uvs.push(floats[offset + 6], 1.0 - floats[offset + 7]);
+        }
+
+        geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+        geometry.setAttribute('normal', new THREE.Float32BufferAttribute(normals, 3));
+        geometry.setAttribute('uv', new THREE.Float32BufferAttribute(uvs, 2));
+        geometry.setIndex(new THREE.BufferAttribute(meshInfo.indices, 1));
+        geometry.computeBoundingSphere();
+
+        const textureIndex = Math.min(index, textures.length - 1);
+        const material = new THREE.MeshLambertMaterial({
+          map: textures.length > 0 ? textures[textureIndex] : null,
+          color: textures.length > 0 ? 0xffffff : 0xcccccc,
+          side: THREE.DoubleSide
+        });
+
+        const mesh = new THREE.Mesh(geometry, material);
+        mesh.name = meshInfo.name;
+        currentModel.add(mesh);
+      });
+
+      // Apply coordinate transform
+      currentModel.applyMatrix4(new THREE.Matrix4().set(
+        1, 0, 0, 0,
+        0, 0, 1, 0,
+        0, 1, 0, 0,
+        0, 0, 0, 1
+      ));
+
+      scene.add(currentModel);
+    }
+
+    // ============================================
+    // STATE MACHINE
+    // ============================================
+    function setState(newState) {
+      if (!AnimationStates[newState]) {
+        log(`Unknown state: ${newState}`, 'error');
+        return;
+      }
+
+      currentState = newState;
+      animationTime = 0;
+      animationDuration = stateAnimations[newState].duration;
+
+      // Update UI
+      document.querySelectorAll('.state-btn').forEach(btn => btn.classList.remove('active'));
+      document.querySelector(`.state-btn.${newState}`).classList.add('active');
+      document.getElementById('current-state').textContent = newState.toUpperCase();
+      document.getElementById('current-state').style.color = `#${AnimationStates[newState].color.toString(16).padStart(6, '0')}`;
+
+      log(`State changed to: ${newState}`, 'anim');
+
+      // Reset model transform for new animation
+      if (currentModel) {
+        currentModel.position.set(0, 0, 0);
+        currentModel.scale.set(1, 1, 1);
+        // Keep current Y rotation, reset X and Z
+        currentModel.rotation.x = 0;
+        currentModel.rotation.z = 0;
+      }
+    }
+
+    function updateAnimation(deltaTime) {
+      if (!currentModel) return;
+
+      animationTime += deltaTime;
+      const stateConfig = AnimationStates[currentState];
+      const animConfig = stateAnimations[currentState];
+      const progress = Math.min(animationTime / animationDuration, 1.0);
+
+      // Update progress bar
+      document.getElementById('anim-progress-bar').style.width = `${progress * 100}%`;
+      document.getElementById('anim-time').textContent =
+        `${animationTime.toFixed(2)}s / ${animationDuration.toFixed(2)}s`;
+
+      // Apply state-specific animations
+      switch (currentState) {
+        case 'Stop':
+          // Gentle breathing/idle oscillation
+          const breathe = Math.sin(animationTime * 2) * animConfig.scaleOscillate;
+          currentModel.scale.set(1 + breathe, 1 + breathe * 0.5, 1 + breathe);
+          break;
+
+        case 'Attackout':
+          // Quick forward lunge and rotation
+          const attackProgress = progress < 0.3 ? progress / 0.3 : 1 - (progress - 0.3) / 0.7;
+          currentModel.position.z = attackProgress * 3;
+          currentModel.rotation.y += deltaTime * 5;
+          const attackScale = 1 + Math.sin(progress * Math.PI) * animConfig.scaleOscillate;
+          currentModel.scale.set(attackScale, attackScale, attackScale);
+          break;
+
+        case 'Damageout':
+          // Shake/stagger effect
+          const shake = Math.sin(animationTime * 30) * animConfig.shakeAmount * (1 - progress);
+          currentModel.position.x = shake;
+          currentModel.rotation.z = shake * 0.2;
+          break;
+
+        case 'Deadout':
+          // Fall over animation
+          const fallProgress = Math.min(progress * 2, 1);
+          currentModel.rotation.x = fallProgress * animConfig.fallRotation;
+          currentModel.position.y = -fallProgress * 5;
+          break;
+
+        case 'Moveout':
+          // Bouncing movement
+          const bounce = Math.abs(Math.sin(animationTime * 8)) * animConfig.bounceAmount;
+          currentModel.position.y = bounce * 5;
+          currentModel.rotation.y += deltaTime * 3;
+          break;
+      }
+
+      // Auto-rotation
+      if (isAutoRotating && currentState !== 'Deadout') {
+        currentModel.rotation.y += rotationSpeed;
+      }
+
+      // Check for animation completion (non-looping states)
+      if (progress >= 1.0 && !stateConfig.loop) {
+        if (stateConfig.nextState) {
+          log(`Animation complete, transitioning to ${stateConfig.nextState}`, 'anim');
+          setState(stateConfig.nextState);
+        } else {
+          // Stay in current state (like Dead)
+          animationTime = animationDuration; // Keep at max
+        }
+      } else if (progress >= 1.0 && stateConfig.loop) {
+        animationTime = 0; // Loop
+      }
+    }
+
+    // ============================================
+    // CONTROLS
+    // ============================================
+    function toggleRotation() {
+      isAutoRotating = !isAutoRotating;
+      document.getElementById('btnRotate').textContent = 'Auto-Rotate: ' + (isAutoRotating ? 'ON' : 'OFF');
+      document.getElementById('btnRotate').classList.toggle('active', isAutoRotating);
+    }
+
+    function resetCamera() {
+      camera.position.set(30, 40, 30);
+      camera.lookAt(new THREE.Vector3(0, 10, 0));
+      if (currentModel) {
+        currentModel.position.set(0, 0, 0);
+        currentModel.rotation.set(0, 0, 0);
+        currentModel.scale.set(1, 1, 1);
+      }
+      setState('Stop');
+    }
+
+    // ============================================
+    // ANIMATION LOOP
+    // ============================================
+    function animate() {
+      requestAnimationFrame(animate);
+
+      const currentTime = performance.now();
+      const deltaTime = (currentTime - lastFrameTime) / 1000;
+      lastFrameTime = currentTime;
+
+      updateAnimation(deltaTime);
+      renderer.render(scene, camera);
+    }
+
+    function onWindowResize() {
+      const container = document.getElementById('render-area');
+      camera.aspect = container.clientWidth / container.clientHeight;
+      camera.updateProjectionMatrix();
+      renderer.setSize(container.clientWidth, container.clientHeight);
+    }
+
+    // Initialize
+    init();
+  </script>
+</body>
+</html>

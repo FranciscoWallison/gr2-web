@@ -289,9 +289,14 @@
       Logger.info(`Textures: ${fileInfo.TextureCount}`);
       Logger.info(`Materials: ${fileInfo.MaterialCount}`);
       Logger.info(`Skeletons: ${fileInfo.SkeletonCount}`);
+      Logger.info(`TrackGroups: ${fileInfo.TrackGroupCount}`);
+      Logger.info(`Animations: ${fileInfo.AnimationCount}`);
 
       // Analyze textures
       analyzeTextures(gr2, fileInfo);
+
+      // Analyze animations
+      analyzeAnimations(gr2, fileInfo);
 
       // Analyze meshes and extract data
       const meshData = analyzeMeshes(gr2, fileInfo);
@@ -386,6 +391,166 @@
       }
 
       Logger.success(`Loaded ${textureData.textures.length} textures`);
+    }
+
+    // Animation data storage
+    let animationData = {
+      trackGroups: [],
+      animations: [],
+      skeleton: null
+    };
+
+    function analyzeAnimations(gr2, fileInfo) {
+      Logger.info('='.repeat(50));
+      Logger.info('ANIMATION ANALYSIS');
+      Logger.info('='.repeat(50));
+
+      animationData = { trackGroups: [], animations: [], skeleton: null };
+
+      // Analyze Skeleton first (needed for bone animation)
+      if (fileInfo.SkeletonCount > 0 && fileInfo.Skeletons) {
+        Logger.info(`--- Skeletons: ${fileInfo.SkeletonCount} ---`);
+        for (let s = 0; s < fileInfo.SkeletonCount; s++) {
+          const skeleton = fileInfo.Skeletons[s];
+          Logger.info(`  Skeleton ${s}: ${skeleton.Name || 'unnamed'}`);
+          Logger.info(`    BoneCount: ${skeleton.BoneCount}`);
+
+          if (skeleton.BoneCount > 0 && skeleton.Bones) {
+            Logger.info(`    Bones:`);
+            // Read first few bones
+            for (let b = 0; b < Math.min(skeleton.BoneCount, 10); b++) {
+              try {
+                // Each bone entry is a pointer in the Bones array
+                const bonePtr = gr2.runtime.get_dword_ptr(skeleton.Bones + 4 * b);
+                const boneName = gr2.runtime.cpu.memory.read_string(
+                  gr2.runtime.cpu.translate_address_read(bonePtr)
+                );
+                Logger.info(`      [${b}] ${boneName}`);
+              } catch(e) {
+                Logger.warn(`      [${b}] Failed to read`);
+              }
+            }
+            if (skeleton.BoneCount > 10) {
+              Logger.info(`      ... and ${skeleton.BoneCount - 10} more bones`);
+            }
+          }
+
+          animationData.skeleton = skeleton;
+        }
+      }
+
+      // Analyze TrackGroups
+      if (fileInfo.TrackGroupCount > 0 && fileInfo.TrackGroups) {
+        Logger.info(`--- TrackGroups: ${fileInfo.TrackGroupCount} ---`);
+        for (let t = 0; t < fileInfo.TrackGroupCount; t++) {
+          try {
+            const trackGroupPtr = gr2.runtime.get_dword_ptr(fileInfo.TrackGroups + 4 * t);
+            Logger.info(`  TrackGroup ${t}: ptr 0x${trackGroupPtr.toString(16)}`);
+
+            // Try to read TrackGroup name
+            const namePtr = gr2.runtime.get_dword_ptr(trackGroupPtr);
+            if (namePtr) {
+              const name = gr2.runtime.cpu.memory.read_string(
+                gr2.runtime.cpu.translate_address_read(namePtr)
+              );
+              Logger.info(`    Name: ${name}`);
+            }
+
+            animationData.trackGroups.push({
+              index: t,
+              ptr: trackGroupPtr
+            });
+          } catch(e) {
+            Logger.warn(`  TrackGroup ${t}: Failed to read`);
+          }
+        }
+      } else {
+        Logger.warn('No TrackGroups found in this file');
+      }
+
+      // Analyze Animations
+      if (fileInfo.AnimationCount > 0 && fileInfo.Animations) {
+        Logger.info(`--- Animations: ${fileInfo.AnimationCount} ---`);
+        for (let a = 0; a < fileInfo.AnimationCount; a++) {
+          try {
+            const animPtr = gr2.runtime.get_dword_ptr(fileInfo.Animations + 4 * a);
+            Logger.success(`  Animation ${a}: ptr 0x${animPtr.toString(16)}`);
+
+            // Read animation structure
+            // granny_animation: Name, Duration, TimeStep, Oversampling, TrackGroupCount, TrackGroups
+            const namePtr = gr2.runtime.get_dword_ptr(animPtr);
+            const duration = gr2.runtime.cpu.memory.readFloat(
+              gr2.runtime.cpu.translate_address_read(animPtr + 4)
+            );
+            const timeStep = gr2.runtime.cpu.memory.readFloat(
+              gr2.runtime.cpu.translate_address_read(animPtr + 8)
+            );
+            const oversampling = gr2.runtime.cpu.memory.readFloat(
+              gr2.runtime.cpu.translate_address_read(animPtr + 12)
+            );
+            const trackGroupCount = gr2.runtime.get_dword_ptr(animPtr + 16);
+
+            let name = 'unknown';
+            if (namePtr) {
+              name = gr2.runtime.cpu.memory.read_string(
+                gr2.runtime.cpu.translate_address_read(namePtr)
+              );
+            }
+
+            Logger.success(`    Name: ${name}`);
+            Logger.info(`    Duration: ${duration.toFixed(3)}s`);
+            Logger.info(`    TimeStep: ${timeStep}`);
+            Logger.info(`    Oversampling: ${oversampling}`);
+            Logger.info(`    TrackGroupCount: ${trackGroupCount}`);
+
+            // Detect animation type from name
+            let animType = 'unknown';
+            const nameLower = name.toLowerCase();
+            if (nameLower.includes('stop') || nameLower.includes('idle') || nameLower.includes('wait')) {
+              animType = 'Stop';
+            } else if (nameLower.includes('attack') || nameLower.includes('atk')) {
+              animType = 'Attackout';
+            } else if (nameLower.includes('damage') || nameLower.includes('hit') || nameLower.includes('hurt')) {
+              animType = 'Damageout';
+            } else if (nameLower.includes('dead') || nameLower.includes('die') || nameLower.includes('death')) {
+              animType = 'Deadout';
+            } else if (nameLower.includes('move') || nameLower.includes('walk') || nameLower.includes('run')) {
+              animType = 'Moveout';
+            }
+            Logger.info(`    Detected Type: ${animType}`);
+
+            animationData.animations.push({
+              index: a,
+              ptr: animPtr,
+              name,
+              duration,
+              timeStep,
+              oversampling,
+              trackGroupCount,
+              type: animType
+            });
+          } catch(e) {
+            Logger.warn(`  Animation ${a}: Failed to read - ${e.message}`);
+          }
+        }
+      } else {
+        Logger.warn('No Animations found in this file');
+        Logger.info('Note: Model-only GR2 files typically don\'t contain animations.');
+        Logger.info('Animations are usually in separate .gr2 files (e.g., monster_attack.gr2)');
+      }
+
+      // Summary
+      Logger.info('--- Animation Summary ---');
+      Logger.info(`Skeleton bones: ${animationData.skeleton ? animationData.skeleton.BoneCount : 0}`);
+      Logger.info(`TrackGroups: ${animationData.trackGroups.length}`);
+      Logger.info(`Animations: ${animationData.animations.length}`);
+
+      if (animationData.animations.length > 0) {
+        Logger.success('Animation types found:');
+        animationData.animations.forEach(a => {
+          Logger.success(`  - ${a.name} (${a.type}) - ${a.duration.toFixed(2)}s`);
+        });
+      }
     }
 
     function analyzeMeshes(gr2, fileInfo) {
