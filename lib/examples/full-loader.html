@@ -1,0 +1,555 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>GR2 File Renderer - Full Implementation</title>
+  <style>
+    body {
+      margin: 0;
+      padding: 0;
+      font-family: Arial, sans-serif;
+      background: #1a1a1a;
+      color: #fff;
+    }
+
+    #container {
+      width: 100%;
+      height: 100vh;
+      display: flex;
+      flex-direction: column;
+    }
+
+    #controls {
+      background: #2a2a2a;
+      padding: 20px;
+      border-bottom: 2px solid #3a3a3a;
+    }
+
+    #controls h1 {
+      margin: 0 0 20px 0;
+      font-size: 24px;
+    }
+
+    #controls button {
+      background: #4a9eff;
+      color: white;
+      border: none;
+      padding: 10px 20px;
+      margin-right: 10px;
+      margin-bottom: 10px;
+      border-radius: 4px;
+      cursor: pointer;
+      font-size: 14px;
+    }
+
+    #controls button:hover {
+      background: #3a8eef;
+    }
+
+    #controls button:disabled {
+      background: #666;
+      cursor: not-allowed;
+    }
+
+    #controls input[type="file"] {
+      display: none;
+    }
+
+    #info {
+      margin-top: 20px;
+      padding: 10px;
+      background: #333;
+      border-radius: 4px;
+      font-size: 12px;
+      max-height: 200px;
+      overflow-y: auto;
+    }
+
+    #info pre {
+      margin: 0;
+      white-space: pre-wrap;
+      word-wrap: break-word;
+    }
+
+    #render-container {
+      flex: 1;
+      position: relative;
+    }
+
+    #loading {
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      font-size: 18px;
+      background: rgba(0,0,0,0.8);
+      padding: 20px;
+      border-radius: 8px;
+      display: none;
+    }
+
+    .error {
+      color: #ff4a4a;
+    }
+
+    .success {
+      color: #4aff4a;
+    }
+  </style>
+</head>
+<body>
+  <div id="container">
+    <div id="controls">
+      <h1>🎮 GR2 File Renderer - Full Implementation</h1>
+
+      <input type="file" id="fileInput" accept=".gr2" />
+      <button id="loadFileBtn">
+        📁 Load Custom GR2 File
+      </button>
+
+      <button id="loadExample1Btn">
+        🎨 empelium90_0.gr2
+      </button>
+
+      <button id="loadExample2Btn">
+        🚩 guildflag90_1.gr2
+      </button>
+
+      <button id="loadExample3Btn">
+        🛡️ kguardian90_7.gr2
+      </button>
+
+      <button id="toggleWireframeBtn">
+        🔲 Toggle Wireframe
+      </button>
+
+      <button id="toggleRotationBtn">
+        🔄 Toggle Rotation
+      </button>
+
+      <div id="info"></div>
+    </div>
+
+    <div id="render-container">
+      <div id="loading">Loading...</div>
+    </div>
+  </div>
+
+  <!-- Load dependencies from parent directory -->
+  <script src="../../three.min.js"></script>
+  <script src="../../const.js"></script>
+  <script src="../../main.js"></script>
+  <script src="../../memory.js"></script>
+  <script src="../../io.js"></script>
+  <script src="../../v86.js"></script>
+  <script src="../../fpu.js"></script>
+  <script src="../../granny2.js"></script>
+  <script src="../../granny2.subs.js"></script>
+  <script src="../../granny2.def.js"></script>
+  <script src="../../pe_env.js"></script>
+
+  <script>
+    // Global state
+    let scene, camera, renderer, controls;
+    let currentModel = null;
+    let isRotating = false;
+    let isWireframe = false;
+    let granny2Binary = null;
+
+    function init() {
+      showInfo('Initializing Three.js scene...');
+
+      // Create scene
+      scene = new THREE.Scene();
+      scene.background = new THREE.Color(0x1a1a1a);
+
+      // Create camera
+      const container = document.getElementById('render-container');
+      camera = new THREE.PerspectiveCamera(
+        45,
+        container.clientWidth / container.clientHeight,
+        1,
+        10000
+      );
+      camera.position.set(25, 35, 25);
+      camera.lookAt(new THREE.Vector3(0, 10, 0));
+
+      // Create renderer
+      renderer = new THREE.WebGLRenderer({ antialias: true });
+      renderer.setSize(container.clientWidth, container.clientHeight);
+      container.appendChild(renderer.domElement);
+
+      // Add lights
+      const ambient = new THREE.AmbientLight(0x404040);
+      scene.add(ambient);
+
+      const directional = new THREE.DirectionalLight(0xffffff, 0.5);
+      directional.position.set(0, 20, -50);
+      scene.add(directional);
+
+      // Add helpers
+      const axesHelper = new THREE.AxesHelper(100);
+      scene.add(axesHelper);
+
+      const gridHelper = new THREE.GridHelper(100, 10);
+      scene.add(gridHelper);
+
+      // Simple orbit controls (mouse drag)
+      setupControls();
+
+      // Handle window resize
+      window.addEventListener('resize', onWindowResize);
+
+      // Setup event listeners
+      setupEventListeners();
+
+      // Start animation loop
+      animate();
+
+      // Load granny2.bin
+      loadGranny2Binary();
+    }
+
+    function setupControls() {
+      let isDragging = false;
+      let previousMousePosition = { x: 0, y: 0 };
+
+      renderer.domElement.addEventListener('mousedown', () => {
+        isDragging = true;
+      });
+
+      renderer.domElement.addEventListener('mousemove', (e) => {
+        if (isDragging && currentModel) {
+          const deltaX = e.offsetX - previousMousePosition.x;
+          const deltaY = e.offsetY - previousMousePosition.y;
+
+          currentModel.rotation.y += deltaX * 0.01;
+          currentModel.rotation.x += deltaY * 0.01;
+        }
+
+        previousMousePosition = {
+          x: e.offsetX,
+          y: e.offsetY
+        };
+      });
+
+      renderer.domElement.addEventListener('mouseup', () => {
+        isDragging = false;
+      });
+
+      // Mouse wheel zoom
+      renderer.domElement.addEventListener('wheel', (e) => {
+        e.preventDefault();
+        camera.position.z += e.deltaY * 0.1;
+      });
+    }
+
+    async function loadGranny2Binary() {
+      try {
+        showInfo('Loading granny2.bin...');
+        const response = await fetch('../../granny2.bin');
+        if (!response.ok) {
+          throw new Error('Failed to load granny2.bin');
+        }
+        granny2Binary = await response.arrayBuffer();
+        showInfo('<span class="success">✓ Ready! Select a .gr2 file to load.</span>');
+      } catch (error) {
+        showInfo('<span class="error">✗ Error loading granny2.bin: ' + error.message + '</span>', true);
+      }
+    }
+
+    function setupEventListeners() {
+      document.getElementById('loadFileBtn').addEventListener('click', () => {
+        document.getElementById('fileInput').click();
+      });
+
+      document.getElementById('fileInput').addEventListener('change', (event) => {
+        const file = event.target.files[0];
+        if (file) {
+          loadGR2File(file);
+        }
+      });
+
+      document.getElementById('loadExample1Btn').addEventListener('click', () => {
+        loadGR2FromURL('../../empelium90_0.gr2');
+      });
+
+      document.getElementById('loadExample2Btn').addEventListener('click', () => {
+        loadGR2FromURL('../../guildflag90_1.gr2');
+      });
+
+      document.getElementById('loadExample3Btn').addEventListener('click', () => {
+        loadGR2FromURL('../../kguardian90_7.gr2');
+      });
+
+      document.getElementById('toggleWireframeBtn').addEventListener('click', () => {
+        isWireframe = !isWireframe;
+        if (currentModel) {
+          currentModel.traverse((object) => {
+            if (object.material) {
+              object.material.wireframe = isWireframe;
+            }
+          });
+        }
+      });
+
+      document.getElementById('toggleRotationBtn').addEventListener('click', () => {
+        isRotating = !isRotating;
+      });
+    }
+
+    async function loadGR2FromURL(url) {
+      try {
+        showLoading(true);
+        showInfo('Loading ' + url + '...');
+
+        const response = await fetch(url);
+        if (!response.ok) {
+          throw new Error('Failed to load file');
+        }
+
+        const arrayBuffer = await response.arrayBuffer();
+        await parseAndRender(arrayBuffer);
+
+      } catch (error) {
+        showInfo('<span class="error">✗ Error: ' + error.message + '</span>', true);
+        console.error(error);
+      } finally {
+        showLoading(false);
+      }
+    }
+
+    async function loadGR2File(file) {
+      try {
+        showLoading(true);
+        showInfo('Loading ' + file.name + '...');
+
+        const arrayBuffer = await file.arrayBuffer();
+        await parseAndRender(arrayBuffer);
+
+      } catch (error) {
+        showInfo('<span class="error">✗ Error: ' + error.message + '</span>', true);
+        console.error(error);
+      } finally {
+        showLoading(false);
+      }
+    }
+
+    async function parseAndRender(gr2ArrayBuffer) {
+      if (!granny2Binary) {
+        throw new Error('granny2.bin not loaded yet');
+      }
+
+      showInfo('Parsing GR2 file using granny2.dll...');
+
+      // Use the original granny2.js implementation
+      const gr2 = new Granny2(granny2Binary);
+
+      // Read GR2 file
+      const grannyFilePtr = gr2.ReadEntireFileFromMemory(gr2ArrayBuffer);
+      const fileInfoPtr = gr2.GetFileInfo(grannyFilePtr);
+
+      // Read file info structure
+      const fileInfo = Granny2.readStructure(
+        gr2.runtime.cpu,
+        fileInfoPtr,
+        Granny2.structs.granny_file_info
+      );
+
+      console.log('File Info:', fileInfo);
+
+      showInfo(`Parsing complete:\n- Models: ${fileInfo.ModelCount}\n- Meshes: ${fileInfo.MeshCount}\n- Textures: ${fileInfo.TextureCount}`);
+
+      // Extract meshes and vertices
+      const meshData = extractMeshData(gr2, fileInfo);
+
+      // Extract textures
+      const textures = extractTextures(gr2, fileInfo);
+
+      // Render to Three.js
+      renderModel(meshData, textures);
+
+      showInfo('<span class="success">✓ Model loaded successfully!</span>');
+    }
+
+    function extractMeshData(gr2, fileInfo) {
+      const meshData = [];
+
+      for (let i = 0; i < fileInfo.ModelCount; i++) {
+        const model = fileInfo.Models[i];
+
+        for (let j = 0; j < model.MeshBindingsCount; j++) {
+          const meshPtr = model.MeshBindings[j]._ptr;
+
+          // Find mesh in fileInfo.Meshes
+          let mesh = null;
+          for (let k = 0; k < fileInfo.Meshes.length; k++) {
+            if (fileInfo.Meshes[k]._ptr === meshPtr) {
+              mesh = fileInfo.Meshes[k];
+              break;
+            }
+          }
+
+          if (!mesh) continue;
+
+          // Get vertices
+          const vertices = gr2.CopyMeshVertices(mesh._ptr);
+
+          // Get indices
+          const indices = gr2.CopyMeshIndices(mesh._ptr);
+
+          meshData.push({
+            name: mesh.Name || 'Mesh_' + j,
+            vertices: new Uint8Array(vertices),
+            indices: new Uint16Array(indices.buffer),
+            vertexCount: gr2.GetMeshVertexCount(mesh._ptr)
+          });
+        }
+      }
+
+      return meshData;
+    }
+
+    function extractTextures(gr2, fileInfo) {
+      const textures = [];
+
+      for (let i = 0; i < fileInfo.TextureCount; i++) {
+        const texturePtr = gr2.runtime.get_dword_ptr(fileInfo.Textures + 4 * i);
+        const textureInfo = Granny2.readStructure(
+          gr2.runtime.cpu,
+          texturePtr,
+          Granny2.structs.granny_texture
+        );
+
+        const textureData = gr2.CopyTextureImage(texturePtr);
+
+        const canvas = document.createElement('canvas');
+        canvas.width = textureInfo.Width;
+        canvas.height = textureInfo.Height;
+
+        const ctx = canvas.getContext('2d');
+        const imageData = ctx.createImageData(canvas.width, canvas.height);
+        imageData.data.set(textureData);
+        ctx.putImageData(imageData, 0, 0);
+
+        textures.push({
+          name: textureInfo.FromFileName || 'Texture_' + i,
+          canvas: canvas,
+          texture: new THREE.CanvasTexture(canvas)
+        });
+      }
+
+      return textures;
+    }
+
+    function renderModel(meshData, textures) {
+      // Clear previous model
+      if (currentModel) {
+        scene.remove(currentModel);
+      }
+
+      currentModel = new THREE.Group();
+
+      meshData.forEach((meshInfo, index) => {
+        const geometry = new THREE.BufferGeometry();
+
+        // Parse PNT332 vertex format: Position(3) + Normal(3) + TexCoord(2) = 8 floats
+        const floats = new Float32Array(meshInfo.vertices.buffer);
+        const vertexCount = meshInfo.vertexCount;
+
+        const positions = [];
+        const normals = [];
+        const uvs = [];
+
+        for (let i = 0; i < vertexCount; i++) {
+          const offset = i * 8;
+
+          // Position
+          positions.push(floats[offset], floats[offset + 1], floats[offset + 2]);
+
+          // Normal
+          normals.push(floats[offset + 3], floats[offset + 4], floats[offset + 5]);
+
+          // UV (flip V coordinate)
+          uvs.push(floats[offset + 6], 1.0 - floats[offset + 7]);
+        }
+
+        geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+        geometry.setAttribute('normal', new THREE.Float32BufferAttribute(normals, 3));
+        geometry.setAttribute('uv', new THREE.Float32BufferAttribute(uvs, 2));
+
+        // Set indices
+        geometry.setIndex(new THREE.BufferAttribute(meshInfo.indices, 1));
+
+        geometry.computeBoundingSphere();
+
+        // Create material
+        let material;
+        if (textures.length > 0) {
+          material = new THREE.MeshLambertMaterial({
+            map: textures[0].texture,
+            side: THREE.DoubleSide,
+            wireframe: isWireframe
+          });
+        } else {
+          material = new THREE.MeshLambertMaterial({
+            color: 0xcccccc,
+            side: THREE.DoubleSide,
+            wireframe: isWireframe
+          });
+        }
+
+        const mesh = new THREE.Mesh(geometry, material);
+        mesh.name = meshInfo.name;
+
+        currentModel.add(mesh);
+      });
+
+      // Apply coordinate system transformation
+      const matrix = new THREE.Matrix4().set(
+        1, 0, 0, 0,
+        0, 0, 1, 0,
+        0, 1, 0, 0,
+        0, 0, 0, 1
+      );
+      currentModel.applyMatrix4(matrix);
+
+      scene.add(currentModel);
+
+      // Reset camera
+      camera.position.set(25, 35, 25);
+      camera.lookAt(new THREE.Vector3(0, 10, 0));
+    }
+
+    function animate() {
+      requestAnimationFrame(animate);
+
+      if (currentModel && isRotating) {
+        currentModel.rotation.y += 0.01;
+      }
+
+      renderer.render(scene, camera);
+    }
+
+    function onWindowResize() {
+      const container = document.getElementById('render-container');
+      camera.aspect = container.clientWidth / container.clientHeight;
+      camera.updateProjectionMatrix();
+      renderer.setSize(container.clientWidth, container.clientHeight);
+    }
+
+    function showLoading(show) {
+      document.getElementById('loading').style.display = show ? 'block' : 'none';
+    }
+
+    function showInfo(message, isError = false) {
+      const info = document.getElementById('info');
+      info.innerHTML = message;
+    }
+
+    // Initialize on load
+    init();
+  </script>
+</body>
+</html>
