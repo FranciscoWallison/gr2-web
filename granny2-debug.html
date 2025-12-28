@@ -1,0 +1,1220 @@
+<!DOCTYPE html>
+<html>
+<head>
+	<title>Granny2 Debug Tool</title>
+	<style>
+		* { box-sizing: border-box; }
+		body {
+			margin: 0;
+			padding: 20px;
+			font-family: 'Consolas', 'Monaco', monospace;
+			background: #0d1117;
+			color: #c9d1d9;
+			font-size: 13px;
+		}
+		h1 { color: #58a6ff; margin-bottom: 10px; }
+		h2 { color: #79c0ff; margin: 15px 0 10px 0; border-bottom: 1px solid #30363d; padding-bottom: 5px; }
+		h3 { color: #a5d6ff; margin: 10px 0 5px 0; }
+
+		.container { display: flex; gap: 20px; flex-wrap: wrap; }
+		.panel {
+			background: #161b22;
+			border: 1px solid #30363d;
+			border-radius: 6px;
+			padding: 15px;
+			margin-bottom: 15px;
+		}
+		.panel-wide { flex: 1; min-width: 600px; }
+		.panel-half { flex: 1; min-width: 400px; }
+
+		#render-container {
+			border: 2px solid #30363d;
+			border-radius: 6px;
+			overflow: hidden;
+			display: inline-block;
+		}
+
+		.log-box {
+			background: #0d1117;
+			border: 1px solid #30363d;
+			border-radius: 4px;
+			padding: 10px;
+			max-height: 300px;
+			overflow-y: auto;
+			font-size: 11px;
+		}
+		.log-entry { padding: 2px 0; border-bottom: 1px solid #21262d; }
+		.log-info { color: #8b949e; }
+		.log-success { color: #3fb950; }
+		.log-warn { color: #d29922; }
+		.log-error { color: #f85149; }
+		.log-data { color: #79c0ff; }
+
+		.data-table {
+			width: 100%;
+			border-collapse: collapse;
+			font-size: 11px;
+		}
+		.data-table th, .data-table td {
+			padding: 4px 8px;
+			text-align: left;
+			border: 1px solid #30363d;
+		}
+		.data-table th { background: #21262d; color: #58a6ff; }
+		.data-table tr:nth-child(even) { background: #161b22; }
+		.data-table tr:hover { background: #21262d; }
+
+		.ptr { color: #f0883e; font-family: monospace; }
+		.num { color: #79c0ff; }
+		.str { color: #a5d6ff; }
+		.bool-true { color: #3fb950; }
+		.bool-false { color: #f85149; }
+
+		button {
+			background: #238636;
+			color: white;
+			border: none;
+			padding: 8px 16px;
+			border-radius: 6px;
+			cursor: pointer;
+			margin: 5px;
+		}
+		button:hover { background: #2ea043; }
+		button:disabled { background: #484f58; cursor: not-allowed; }
+		.btn-danger { background: #da3633; }
+		.btn-danger:hover { background: #f85149; }
+		.btn-info { background: #1f6feb; }
+		.btn-info:hover { background: #388bfd; }
+
+		select, input[type="file"] {
+			background: #21262d;
+			color: #c9d1d9;
+			border: 1px solid #30363d;
+			padding: 8px;
+			border-radius: 4px;
+			margin: 5px;
+		}
+
+		.status {
+			display: inline-block;
+			padding: 4px 8px;
+			border-radius: 4px;
+			font-weight: bold;
+		}
+		.status-loading { background: #1f6feb; }
+		.status-success { background: #238636; }
+		.status-error { background: #da3633; }
+
+		.tree-view { padding-left: 20px; }
+		.tree-item {
+			cursor: pointer;
+			padding: 2px 0;
+		}
+		.tree-item:hover { background: #21262d; }
+		.tree-toggle { color: #8b949e; margin-right: 5px; }
+
+		.hex-view {
+			font-family: monospace;
+			font-size: 11px;
+			background: #0d1117;
+			padding: 10px;
+			border-radius: 4px;
+			overflow-x: auto;
+		}
+		.hex-offset { color: #8b949e; }
+		.hex-byte { color: #79c0ff; }
+		.hex-ascii { color: #a5d6ff; }
+
+		#loading-overlay {
+			position: fixed;
+			top: 0; left: 0; right: 0; bottom: 0;
+			background: rgba(0,0,0,0.8);
+			display: flex;
+			justify-content: center;
+			align-items: center;
+			z-index: 1000;
+			color: #58a6ff;
+			font-size: 20px;
+		}
+		.hidden { display: none !important; }
+
+		.collapsible {
+			cursor: pointer;
+			user-select: none;
+		}
+		.collapsible::before {
+			content: '▼ ';
+			font-size: 10px;
+		}
+		.collapsible.collapsed::before {
+			content: '▶ ';
+		}
+		.collapsible-content {
+			padding-left: 15px;
+		}
+		.collapsed + .collapsible-content {
+			display: none;
+		}
+	</style>
+</head>
+<body>
+	<div id="loading-overlay">
+		<div>
+			<div>Loading Granny2 Runtime...</div>
+			<div id="loading-status" style="font-size: 14px; margin-top: 10px;"></div>
+		</div>
+	</div>
+
+	<h1>🔍 Granny2 Debug Tool</h1>
+
+	<div class="panel">
+		<h2>File Selection</h2>
+		<div>
+			<label>GR2 Model File:</label>
+			<select id="gr2-select">
+				<option value="empelium90_0.gr2">empelium90_0.gr2</option>
+				<option value="kguardian90_7.gr2" selected>kguardian90_7.gr2</option>
+				<option value="guildflag90_1.gr2">guildflag90_1.gr2</option>
+			</select>
+			<button onclick="loadSelectedFile()">Load File</button>
+			<button class="btn-info" onclick="analyzeCurrentFile()">Full Analysis</button>
+		</div>
+	</div>
+
+	<div class="container">
+		<div class="panel panel-half">
+			<h2>Load Log</h2>
+			<div id="load-log" class="log-box"></div>
+		</div>
+		<div class="panel panel-half">
+			<h2>Runtime Status</h2>
+			<div id="runtime-status"></div>
+		</div>
+	</div>
+
+	<div class="panel">
+		<h2>File Info (granny_file_info)</h2>
+		<div id="file-info-container"></div>
+	</div>
+
+	<div class="container">
+		<div class="panel panel-half">
+			<h2>Models</h2>
+			<div id="models-container"></div>
+		</div>
+		<div class="panel panel-half">
+			<h2>Skeletons</h2>
+			<div id="skeletons-container"></div>
+		</div>
+	</div>
+
+	<div class="container">
+		<div class="panel panel-half">
+			<h2>Meshes</h2>
+			<div id="meshes-container"></div>
+		</div>
+		<div class="panel panel-half">
+			<h2>Animations</h2>
+			<div id="animations-container"></div>
+		</div>
+	</div>
+
+	<div class="container">
+		<div class="panel panel-half">
+			<h2>Textures</h2>
+			<div id="textures-container"></div>
+		</div>
+		<div class="panel panel-half">
+			<h2>Materials</h2>
+			<div id="materials-container"></div>
+		</div>
+	</div>
+
+	<div class="panel">
+		<h2>3D Preview</h2>
+		<div id="render-container"></div>
+		<div style="margin-top: 10px;">
+			<button onclick="toggleRotation()">Toggle Rotation</button>
+			<button onclick="resetCamera()">Reset Camera</button>
+			<span id="render-status"></span>
+		</div>
+	</div>
+
+	<div class="panel">
+		<h2>Animation Test</h2>
+		<div id="animation-test-container"></div>
+	</div>
+
+	<div class="panel">
+		<h2>Raw Memory Inspector</h2>
+		<div>
+			<input type="text" id="mem-address" placeholder="Address (hex)" value="0x10000000" style="width: 150px;">
+			<input type="number" id="mem-length" placeholder="Length" value="256" style="width: 100px;">
+			<button onclick="inspectMemory()">Inspect</button>
+		</div>
+		<div id="memory-view" class="hex-view" style="margin-top: 10px;"></div>
+	</div>
+
+	<script>
+		function dbg_assert(cond) { if(!cond) console.log("Assertion failure"); }
+		function dbg_log(s) { console.log(s); }
+	</script>
+
+	<script src="three.min.js"></script>
+	<script src="const.js"></script>
+	<script src="main.js"></script>
+	<script src="memory.js"></script>
+	<script src="io.js"></script>
+	<script src="v86.js"></script>
+	<script src="fpu.js"></script>
+	<script src="granny2.js"></script>
+	<script src="granny2.subs.js"></script>
+	<script src="granny2.def.js"></script>
+	<script src="pe_env.js"></script>
+	<script src="animation-controller.js"></script>
+
+	<script>
+		// =============================================
+		// Debug Tool State
+		// =============================================
+		var DEBUG = {
+			gr2: null,
+			grannyFile: null,
+			fileInfoPtr: null,
+			fileInfo: null,
+			scene: null,
+			camera: null,
+			renderer: null,
+			mesh3d: null,
+			rotating: true,
+			animationController: null,
+			modelInstance: null,
+			worldPose: null
+		};
+
+		// =============================================
+		// Logging Utilities
+		// =============================================
+		function log(msg, type) {
+			type = type || 'info';
+			var logBox = document.getElementById('load-log');
+			var entry = document.createElement('div');
+			entry.className = 'log-entry log-' + type;
+			entry.textContent = '[' + new Date().toISOString().substr(11, 8) + '] ' + msg;
+			logBox.appendChild(entry);
+			logBox.scrollTop = logBox.scrollHeight;
+			console.log('[' + type.toUpperCase() + ']', msg);
+		}
+
+		function formatPtr(ptr) {
+			if (ptr === null || ptr === undefined) return '<span class="ptr">null</span>';
+			return '<span class="ptr">0x' + (ptr >>> 0).toString(16).toUpperCase().padStart(8, '0') + '</span>';
+		}
+
+		function formatNum(num) {
+			return '<span class="num">' + num + '</span>';
+		}
+
+		function formatStr(str) {
+			return '<span class="str">"' + str + '"</span>';
+		}
+
+		function formatBool(val) {
+			return val ? '<span class="bool-true">true</span>' : '<span class="bool-false">false</span>';
+		}
+
+		// =============================================
+		// Structure Display
+		// =============================================
+		function createTable(data, columns) {
+			var html = '<table class="data-table"><thead><tr>';
+			columns.forEach(function(col) {
+				html += '<th>' + col + '</th>';
+			});
+			html += '</tr></thead><tbody>';
+
+			data.forEach(function(row) {
+				html += '<tr>';
+				columns.forEach(function(col) {
+					var val = row[col];
+					if (typeof val === 'number') {
+						if (col.toLowerCase().includes('ptr') || col.toLowerCase().includes('pointer') || col === '_ptr') {
+							html += '<td>' + formatPtr(val) + '</td>';
+						} else {
+							html += '<td>' + formatNum(val) + '</td>';
+						}
+					} else if (typeof val === 'string') {
+						html += '<td>' + formatStr(val) + '</td>';
+					} else if (typeof val === 'boolean') {
+						html += '<td>' + formatBool(val) + '</td>';
+					} else if (Array.isArray(val)) {
+						html += '<td>[' + val.length + ' items]</td>';
+					} else if (val && typeof val === 'object') {
+						html += '<td>{object}</td>';
+					} else {
+						html += '<td>' + val + '</td>';
+					}
+				});
+				html += '</tr>';
+			});
+
+			html += '</tbody></table>';
+			return html;
+		}
+
+		function displayStruct(container, struct, title) {
+			var html = '<h3>' + title + '</h3>';
+			html += '<table class="data-table">';
+
+			for (var key in struct) {
+				if (key.startsWith('_')) continue;
+				var val = struct[key];
+				html += '<tr><th>' + key + '</th><td>';
+
+				if (typeof val === 'number') {
+					if (key.toLowerCase().includes('count') || key.toLowerCase().includes('size')) {
+						html += formatNum(val);
+					} else {
+						html += formatPtr(val) + ' (' + val + ')';
+					}
+				} else if (typeof val === 'string') {
+					html += formatStr(val);
+				} else if (Array.isArray(val)) {
+					html += 'Array[' + val.length + ']';
+					if (val.length > 0 && val.length <= 16) {
+						if (typeof val[0] === 'number') {
+							html += ': [' + val.map(function(v) {
+								return typeof v === 'number' && v % 1 !== 0 ? v.toFixed(4) : v;
+							}).join(', ') + ']';
+						}
+					}
+				} else if (val && typeof val === 'object') {
+					html += '{object: ' + (val._ptr ? formatPtr(val._ptr) : 'inline') + '}';
+				} else {
+					html += String(val);
+				}
+
+				html += '</td></tr>';
+			}
+
+			html += '</table>';
+			html += '<div style="font-size: 10px; color: #8b949e;">_ptr: ' + formatPtr(struct._ptr) + ', _size: ' + (struct._size || 'N/A') + '</div>';
+
+			container.innerHTML = html;
+		}
+
+		// =============================================
+		// File Loading
+		// =============================================
+		function updateLoadingStatus(msg) {
+			document.getElementById('loading-status').textContent = msg;
+		}
+
+		function initGranny2(bin_granny2) {
+			log('Initializing Granny2 runtime...', 'info');
+
+			try {
+				DEBUG.gr2 = new Granny2(bin_granny2);
+				log('Granny2 runtime created', 'success');
+
+				// Check version
+				var versionMatch = DEBUG.gr2.VersionMatch(2, 1, 0, 5);
+				log('Version match (2.1.0.5): ' + versionMatch, versionMatch ? 'success' : 'warn');
+
+				// Update runtime status
+				updateRuntimeStatus();
+
+				return true;
+			} catch (e) {
+				log('Failed to initialize Granny2: ' + e.message, 'error');
+				console.error(e);
+				return false;
+			}
+		}
+
+		function updateRuntimeStatus() {
+			var container = document.getElementById('runtime-status');
+			var html = '<table class="data-table">';
+
+			html += '<tr><th>Runtime</th><td>' + (DEBUG.gr2 ? formatBool(true) + ' initialized' : formatBool(false)) + '</td></tr>';
+
+			if (DEBUG.gr2) {
+				var rt = DEBUG.gr2.runtime;
+				html += '<tr><th>Base Address</th><td>' + formatPtr(rt.base_addr) + '</td></tr>';
+				html += '<tr><th>Stack Address</th><td>' + formatPtr(rt.stack_addr) + '</td></tr>';
+				html += '<tr><th>CPU Initialized</th><td>' + formatBool(!!rt.cpu) + '</td></tr>';
+
+				if (rt.allocator && rt.allocator._map) {
+					html += '<tr><th>Allocations</th><td>' + rt.allocator._map.length + '</td></tr>';
+				}
+			}
+
+			html += '<tr><th>Granny File</th><td>' + formatPtr(DEBUG.grannyFile) + '</td></tr>';
+			html += '<tr><th>File Info</th><td>' + formatPtr(DEBUG.fileInfoPtr) + '</td></tr>';
+
+			html += '</table>';
+			container.innerHTML = html;
+		}
+
+		function loadGR2File(filename) {
+			log('Loading GR2 file: ' + filename, 'info');
+
+			var xhr = new XMLHttpRequest();
+			xhr.open('GET', filename, true);
+			xhr.responseType = 'arraybuffer';
+			xhr.onload = function() {
+				if (this.status === 200) {
+					log('File loaded: ' + this.response.byteLength + ' bytes', 'success');
+					parseGR2File(this.response);
+				} else {
+					log('Failed to load file: HTTP ' + this.status, 'error');
+				}
+			};
+			xhr.onerror = function() {
+				log('Network error loading file', 'error');
+			};
+			xhr.send(null);
+		}
+
+		function parseGR2File(buffer) {
+			log('Parsing GR2 file...', 'info');
+
+			try {
+				// Read file header
+				var header = new Uint8Array(buffer, 0, 32);
+				var headerHex = Array.from(header).map(function(b) { return b.toString(16).padStart(2, '0'); }).join(' ');
+				log('File header: ' + headerHex, 'data');
+
+				// Load into Granny2
+				DEBUG.grannyFile = DEBUG.gr2.ReadEntireFileFromMemory(buffer);
+				log('ReadEntireFileFromMemory returned: ' + formatPtr(DEBUG.grannyFile).replace(/<[^>]*>/g, ''),
+					DEBUG.grannyFile ? 'success' : 'error');
+
+				if (!DEBUG.grannyFile) {
+					log('Failed to load GR2 file into memory', 'error');
+					return;
+				}
+
+				// Get file info
+				DEBUG.fileInfoPtr = DEBUG.gr2.GetFileInfo(DEBUG.grannyFile);
+				log('GetFileInfo returned: ' + formatPtr(DEBUG.fileInfoPtr).replace(/<[^>]*>/g, ''),
+					DEBUG.fileInfoPtr ? 'success' : 'error');
+
+				if (!DEBUG.fileInfoPtr) {
+					log('Failed to get file info', 'error');
+					return;
+				}
+
+				// Parse file info structure
+				DEBUG.fileInfo = Granny2.readStructure(
+					DEBUG.gr2.runtime.cpu,
+					DEBUG.fileInfoPtr,
+					Granny2.structs.granny_file_info
+				);
+				log('Parsed granny_file_info structure', 'success');
+
+				// Display all data
+				displayFileInfo();
+				displayModels();
+				displaySkeletons();
+				displayMeshes();
+				displayAnimations();
+				displayTextures();
+				displayMaterials();
+
+				// Update runtime status
+				updateRuntimeStatus();
+
+				// Try to render
+				tryRender();
+
+			} catch (e) {
+				log('Error parsing GR2: ' + e.message, 'error');
+				console.error(e);
+			}
+		}
+
+		// =============================================
+		// Display Functions
+		// =============================================
+		function displayFileInfo() {
+			var container = document.getElementById('file-info-container');
+			var info = DEBUG.fileInfo;
+
+			var html = '<table class="data-table">';
+			html += '<tr><th>Field</th><th>Value</th><th>Details</th></tr>';
+			html += '<tr><td>FromFileName</td><td>' + formatStr(info.FromFileName || 'N/A') + '</td><td></td></tr>';
+			html += '<tr><td>TextureCount</td><td>' + formatNum(info.TextureCount) + '</td><td>Textures ptr: ' + formatPtr(info.Textures) + '</td></tr>';
+			html += '<tr><td>MaterialCount</td><td>' + formatNum(info.MaterialCount) + '</td><td>Materials ptr: ' + formatPtr(info.Materials) + '</td></tr>';
+			html += '<tr><td>SkeletonCount</td><td>' + formatNum(info.SkeletonCount) + '</td><td>' + info.Skeletons.length + ' parsed</td></tr>';
+			html += '<tr><td>MeshCount</td><td>' + formatNum(info.MeshCount) + '</td><td>' + info.Meshes.length + ' parsed</td></tr>';
+			html += '<tr><td>ModelCount</td><td>' + formatNum(info.ModelCount) + '</td><td>' + info.Models.length + ' parsed</td></tr>';
+			html += '<tr><td>TrackGroupCount</td><td>' + formatNum(info.TrackGroupCount) + '</td><td>TrackGroups ptr: ' + formatPtr(info.TrackGroups) + '</td></tr>';
+			html += '<tr><td>AnimationCount</td><td>' + formatNum(info.AnimationCount) + '</td><td>Animations ptr: ' + formatPtr(info.Animations) + '</td></tr>';
+			html += '</table>';
+
+			container.innerHTML = html;
+		}
+
+		function displayModels() {
+			var container = document.getElementById('models-container');
+			var info = DEBUG.fileInfo;
+
+			if (info.ModelCount === 0) {
+				container.innerHTML = '<div class="log-warn">No models found</div>';
+				return;
+			}
+
+			var html = '';
+			info.Models.forEach(function(model, i) {
+				html += '<div class="collapsible" onclick="this.classList.toggle(\'collapsed\')">Model ' + i + ': ' + (model.Name || 'Unnamed') + '</div>';
+				html += '<div class="collapsible-content">';
+				html += '<table class="data-table">';
+				html += '<tr><th>Name</th><td>' + formatStr(model.Name || 'N/A') + '</td></tr>';
+				html += '<tr><th>_ptr</th><td>' + formatPtr(model._ptr) + '</td></tr>';
+				html += '<tr><th>Skeleton</th><td>' + formatPtr(model.Skeleton) + '</td></tr>';
+				html += '<tr><th>MeshBindingsCount</th><td>' + formatNum(model.MeshBindingsCount) + '</td></tr>';
+
+				if (model.MeshBindings && model.MeshBindings.length > 0) {
+					html += '<tr><th>MeshBindings</th><td>';
+					model.MeshBindings.forEach(function(mb, j) {
+						html += 'Binding ' + j + ': ' + formatPtr(mb._ptr) + ' (Mesh: ' + formatPtr(mb.Mesh) + ')<br>';
+					});
+					html += '</td></tr>';
+				}
+
+				// Initial Placement
+				if (model.InitialPlacement) {
+					var ip = model.InitialPlacement;
+					html += '<tr><th>InitialPlacement</th><td>';
+					html += 'Flags: ' + ip.Flags + '<br>';
+					html += 'Position: [' + (ip.Position || []).map(function(v) { return v.toFixed(3); }).join(', ') + ']<br>';
+					html += 'Orientation: [' + (ip.Orientation || []).map(function(v) { return v.toFixed(3); }).join(', ') + ']';
+					html += '</td></tr>';
+				}
+
+				html += '</table></div>';
+			});
+
+			container.innerHTML = html;
+		}
+
+		function displaySkeletons() {
+			var container = document.getElementById('skeletons-container');
+			var info = DEBUG.fileInfo;
+
+			if (info.SkeletonCount === 0) {
+				container.innerHTML = '<div class="log-warn">No skeletons found</div>';
+				return;
+			}
+
+			var html = '';
+			info.Skeletons.forEach(function(skel, i) {
+				html += '<div class="collapsible" onclick="this.classList.toggle(\'collapsed\')">Skeleton ' + i + ': ' + (skel.Name || 'Unnamed') + ' (' + skel.BoneCount + ' bones)</div>';
+				html += '<div class="collapsible-content">';
+				html += '<table class="data-table">';
+				html += '<tr><th>Name</th><td>' + formatStr(skel.Name || 'N/A') + '</td></tr>';
+				html += '<tr><th>_ptr</th><td>' + formatPtr(skel._ptr) + '</td></tr>';
+				html += '<tr><th>BoneCount</th><td>' + formatNum(skel.BoneCount) + '</td></tr>';
+				html += '<tr><th>Bones ptr</th><td>' + formatPtr(skel.Bones) + '</td></tr>';
+				html += '</table>';
+
+				// Try to read bone names
+				if (skel.BoneCount > 0 && skel.Bones) {
+					html += '<h4>Bones:</h4><div style="max-height: 200px; overflow-y: auto;">';
+					try {
+						for (var b = 0; b < Math.min(skel.BoneCount, 50); b++) {
+							var bonePtr = DEBUG.gr2.runtime.get_dword_ptr(skel.Bones + b * 4);
+							if (bonePtr) {
+								try {
+									var bone = Granny2.readStructure(
+										DEBUG.gr2.runtime.cpu,
+										bonePtr,
+										Granny2.structs.granny_bone
+									);
+									html += '<div style="font-size: 10px;">' + b + ': ' + (bone.Name || 'unnamed') + ' (parent: ' + bone.ParentIndex + ')</div>';
+								} catch (e) {
+									html += '<div style="font-size: 10px; color: #f85149;">' + b + ': Error reading bone</div>';
+								}
+							}
+						}
+						if (skel.BoneCount > 50) {
+							html += '<div>... and ' + (skel.BoneCount - 50) + ' more bones</div>';
+						}
+					} catch (e) {
+						html += '<div class="log-error">Error reading bones: ' + e.message + '</div>';
+					}
+					html += '</div>';
+				}
+
+				html += '</div>';
+			});
+
+			container.innerHTML = html;
+		}
+
+		function displayMeshes() {
+			var container = document.getElementById('meshes-container');
+			var info = DEBUG.fileInfo;
+
+			if (info.MeshCount === 0) {
+				container.innerHTML = '<div class="log-warn">No meshes found</div>';
+				return;
+			}
+
+			var html = '';
+			info.Meshes.forEach(function(mesh, i) {
+				// Get vertex and index counts
+				var vertexCount = 0, indexCount = 0;
+				try {
+					vertexCount = DEBUG.gr2.GetMeshVertexCount(mesh._ptr);
+					indexCount = DEBUG.gr2.GetMeshIndexCount(mesh._ptr);
+				} catch (e) {
+					log('Error getting mesh ' + i + ' counts: ' + e.message, 'warn');
+				}
+
+				html += '<div class="collapsible" onclick="this.classList.toggle(\'collapsed\')">Mesh ' + i + ': ' + (mesh.Name || 'Unnamed') + ' (' + vertexCount + ' verts, ' + indexCount + ' indices)</div>';
+				html += '<div class="collapsible-content">';
+				html += '<table class="data-table">';
+				html += '<tr><th>Name</th><td>' + formatStr(mesh.Name || 'N/A') + '</td></tr>';
+				html += '<tr><th>_ptr</th><td>' + formatPtr(mesh._ptr) + '</td></tr>';
+				html += '<tr><th>VertexCount</th><td>' + formatNum(vertexCount) + '</td></tr>';
+				html += '<tr><th>IndexCount</th><td>' + formatNum(indexCount) + '</td></tr>';
+				html += '<tr><th>PrimaryVertexData</th><td>' + formatPtr(mesh.PrimaryVertexData) + '</td></tr>';
+				html += '<tr><th>PrimaryTopology</th><td>' + formatPtr(mesh.PrimaryTopology) + '</td></tr>';
+				html += '<tr><th>MaterialsBindingCount</th><td>' + formatNum(mesh.MaterialsBindingCount) + '</td></tr>';
+				html += '<tr><th>BoneBindingsCount</th><td>' + formatNum(mesh.BoneBindingsCount) + '</td></tr>';
+
+				// Check if rigid
+				try {
+					var isRigid = DEBUG.gr2.MeshIsRigid(mesh._ptr);
+					html += '<tr><th>IsRigid</th><td>' + formatBool(isRigid) + '</td></tr>';
+				} catch (e) {}
+
+				// Get vertex type
+				try {
+					var vertexType = DEBUG.gr2.GetMeshVertexType(mesh._ptr);
+					html += '<tr><th>VertexType</th><td>' + formatPtr(vertexType) + '</td></tr>';
+				} catch (e) {}
+
+				html += '</table>';
+				html += '<button class="btn-info" style="font-size: 11px; padding: 4px 8px;" onclick="previewMesh(' + i + ')">Preview This Mesh</button>';
+				html += '</div>';
+			});
+
+			container.innerHTML = html;
+		}
+
+		function displayAnimations() {
+			var container = document.getElementById('animations-container');
+			var info = DEBUG.fileInfo;
+
+			if (info.AnimationCount === 0) {
+				container.innerHTML = '<div class="log-warn">No animations found in this file</div>';
+				log('AnimationCount is 0', 'warn');
+				return;
+			}
+
+			log('Found ' + info.AnimationCount + ' animations, parsing...', 'info');
+
+			var html = '';
+			var animations = [];
+
+			for (var i = 0; i < info.AnimationCount; i++) {
+				try {
+					var animPtr = DEBUG.gr2.runtime.get_dword_ptr(info.Animations + i * 4);
+					log('Animation ' + i + ' ptr: ' + formatPtr(animPtr).replace(/<[^>]*>/g, ''), 'data');
+
+					if (animPtr) {
+						var anim = Granny2.readStructure(
+							DEBUG.gr2.runtime.cpu,
+							animPtr,
+							Granny2.structs.granny_animation
+						);
+						anim._index = i;
+						animations.push(anim);
+						log('Animation ' + i + ': ' + anim.Name + ', duration: ' + anim.Duration + 's', 'success');
+					}
+				} catch (e) {
+					log('Error reading animation ' + i + ': ' + e.message, 'error');
+				}
+			}
+
+			animations.forEach(function(anim, i) {
+				html += '<div class="collapsible" onclick="this.classList.toggle(\'collapsed\')">Anim ' + anim._index + ': ' + (anim.Name || 'Unnamed') + ' (' + anim.Duration.toFixed(2) + 's)</div>';
+				html += '<div class="collapsible-content">';
+				html += '<table class="data-table">';
+				html += '<tr><th>Name</th><td>' + formatStr(anim.Name || 'N/A') + '</td></tr>';
+				html += '<tr><th>_ptr</th><td>' + formatPtr(anim._ptr) + '</td></tr>';
+				html += '<tr><th>Duration</th><td>' + formatNum(anim.Duration.toFixed(4)) + ' seconds</td></tr>';
+				html += '<tr><th>TimeStep</th><td>' + formatNum(anim.TimeStep.toFixed(6)) + '</td></tr>';
+				html += '<tr><th>Oversampling</th><td>' + formatNum(anim.Oversampling.toFixed(2)) + '</td></tr>';
+				html += '<tr><th>TrackGroupCount</th><td>' + formatNum(anim.TrackGroupCount) + '</td></tr>';
+				html += '<tr><th>TrackGroups</th><td>' + formatPtr(anim.TrackGroups) + '</td></tr>';
+				html += '</table>';
+				html += '<button class="btn-info" style="font-size: 11px; padding: 4px 8px;" onclick="playAnimation(' + anim._index + ')">Play Animation</button>';
+				html += '</div>';
+			});
+
+			container.innerHTML = html || '<div class="log-error">Failed to parse animations</div>';
+		}
+
+		function displayTextures() {
+			var container = document.getElementById('textures-container');
+			var info = DEBUG.fileInfo;
+
+			if (info.TextureCount === 0) {
+				container.innerHTML = '<div class="log-warn">No textures found</div>';
+				return;
+			}
+
+			var html = '';
+
+			for (var i = 0; i < info.TextureCount; i++) {
+				try {
+					var texPtr = DEBUG.gr2.runtime.get_dword_ptr(info.Textures + i * 4);
+					var tex = Granny2.readStructure(
+						DEBUG.gr2.runtime.cpu,
+						texPtr,
+						Granny2.structs.granny_texture
+					);
+
+					html += '<div class="collapsible" onclick="this.classList.toggle(\'collapsed\')">Texture ' + i + ': ' + tex.Width + 'x' + tex.Height + '</div>';
+					html += '<div class="collapsible-content">';
+					html += '<table class="data-table">';
+					html += '<tr><th>FromFileName</th><td>' + formatStr(tex.FromFileName || 'N/A') + '</td></tr>';
+					html += '<tr><th>_ptr</th><td>' + formatPtr(tex._ptr) + '</td></tr>';
+					html += '<tr><th>Width</th><td>' + formatNum(tex.Width) + '</td></tr>';
+					html += '<tr><th>Height</th><td>' + formatNum(tex.Height) + '</td></tr>';
+					html += '<tr><th>TextureType</th><td>' + formatNum(tex.TextureType) + '</td></tr>';
+					html += '<tr><th>Encoding</th><td>' + formatNum(tex.Encoding) + '</td></tr>';
+					html += '<tr><th>SubFormat</th><td>' + formatNum(tex.SubFormat) + '</td></tr>';
+					html += '<tr><th>BytesPerPixel</th><td>' + formatNum(tex.BytesPerPixel) + '</td></tr>';
+					html += '<tr><th>ImageCount</th><td>' + formatNum(tex.ImageCount) + '</td></tr>';
+					html += '</table>';
+
+					// Try to extract texture
+					try {
+						var hasAlpha = DEBUG.gr2.TextureHasAlpha(texPtr);
+						html += '<div>Has Alpha: ' + formatBool(hasAlpha) + '</div>';
+						html += '<button class="btn-info" style="font-size: 11px; padding: 4px 8px;" onclick="extractTexture(' + i + ')">Extract Texture</button>';
+						html += '<div id="texture-preview-' + i + '"></div>';
+					} catch (e) {
+						html += '<div class="log-error">Cannot extract: ' + e.message + '</div>';
+					}
+
+					html += '</div>';
+				} catch (e) {
+					html += '<div class="log-error">Error reading texture ' + i + ': ' + e.message + '</div>';
+				}
+			}
+
+			container.innerHTML = html;
+		}
+
+		function displayMaterials() {
+			var container = document.getElementById('materials-container');
+			var info = DEBUG.fileInfo;
+
+			if (info.MaterialCount === 0) {
+				container.innerHTML = '<div class="log-warn">No materials found</div>';
+				return;
+			}
+
+			var html = '';
+
+			for (var i = 0; i < info.MaterialCount; i++) {
+				try {
+					var matPtr = DEBUG.gr2.runtime.get_dword_ptr(info.Materials + i * 4);
+					var mat = Granny2.readStructure(
+						DEBUG.gr2.runtime.cpu,
+						matPtr,
+						Granny2.structs.granny_material
+					);
+
+					html += '<div>Material ' + i + ': ' + (mat.Name || 'Unnamed') + ' (Maps: ' + mat.MapCount + ', Texture: ' + formatPtr(mat.Texture) + ')</div>';
+				} catch (e) {
+					html += '<div class="log-error">Error reading material ' + i + '</div>';
+				}
+			}
+
+			container.innerHTML = html;
+		}
+
+		// =============================================
+		// Interactive Functions
+		// =============================================
+		function extractTexture(index) {
+			var info = DEBUG.fileInfo;
+			var texPtr = DEBUG.gr2.runtime.get_dword_ptr(info.Textures + index * 4);
+			var tex = Granny2.readStructure(DEBUG.gr2.runtime.cpu, texPtr, Granny2.structs.granny_texture);
+
+			log('Extracting texture ' + index + ' (' + tex.Width + 'x' + tex.Height + ')...', 'info');
+
+			try {
+				var data = DEBUG.gr2.CopyTextureImage(texPtr);
+				log('Got ' + data.length + ' bytes of texture data', 'success');
+
+				var canvas = document.createElement('canvas');
+				canvas.width = tex.Width;
+				canvas.height = tex.Height;
+				canvas.style.border = '1px solid #30363d';
+				canvas.style.marginTop = '5px';
+
+				var ctx = canvas.getContext('2d');
+				var imgd = ctx.getImageData(0, 0, tex.Width, tex.Height);
+				for (var j = 0; j < data.length; j++) {
+					imgd.data[j] = data[j];
+				}
+				ctx.putImageData(imgd, 0, 0);
+
+				var container = document.getElementById('texture-preview-' + index);
+				container.innerHTML = '';
+				container.appendChild(canvas);
+
+			} catch (e) {
+				log('Error extracting texture: ' + e.message, 'error');
+			}
+		}
+
+		function previewMesh(index) {
+			log('Previewing mesh ' + index + '...', 'info');
+
+			var mesh = DEBUG.fileInfo.Meshes[index];
+
+			try {
+				var vertices = DEBUG.gr2.CopyMeshVertices(mesh._ptr);
+				var indices = DEBUG.gr2.CopyMeshIndices(mesh._ptr);
+
+				log('Got ' + vertices.length + ' bytes of vertex data', 'data');
+				log('Got ' + indices.length + ' bytes of index data', 'data');
+
+				// Get texture if available
+				var textures = [];
+				if (DEBUG.fileInfo.TextureCount > 0) {
+					var texPtr = DEBUG.gr2.runtime.get_dword_ptr(DEBUG.fileInfo.Textures);
+					var tex = Granny2.readStructure(DEBUG.gr2.runtime.cpu, texPtr, Granny2.structs.granny_texture);
+					var texData = DEBUG.gr2.CopyTextureImage(texPtr);
+
+					var canvas = document.createElement('canvas');
+					canvas.width = tex.Width;
+					canvas.height = tex.Height;
+					var ctx = canvas.getContext('2d');
+					var imgd = ctx.getImageData(0, 0, tex.Width, tex.Height);
+					for (var j = 0; j < texData.length; j++) {
+						imgd.data[j] = texData[j];
+					}
+					ctx.putImageData(imgd, 0, 0);
+					textures.push(canvas);
+				}
+
+				createScene([vertices], [indices], textures);
+				log('3D preview created', 'success');
+
+			} catch (e) {
+				log('Error previewing mesh: ' + e.message, 'error');
+				console.error(e);
+			}
+		}
+
+		function playAnimation(index) {
+			log('Playing animation ' + index + '...', 'info');
+
+			try {
+				var animPtr = DEBUG.gr2.runtime.get_dword_ptr(DEBUG.fileInfo.Animations + index * 4);
+				var model = DEBUG.fileInfo.Models[0];
+
+				if (!DEBUG.modelInstance) {
+					DEBUG.modelInstance = DEBUG.gr2.InstantiateModel(model._ptr);
+					log('Created model instance: ' + formatPtr(DEBUG.modelInstance).replace(/<[^>]*>/g, ''), 'data');
+				}
+
+				// Free existing control
+				if (DEBUG.animationControl) {
+					DEBUG.gr2.FreeControl(DEBUG.animationControl);
+				}
+
+				// Play animation
+				DEBUG.animationControl = DEBUG.gr2.PlayControlledAnimation(0, animPtr, DEBUG.modelInstance);
+				log('PlayControlledAnimation returned: ' + formatPtr(DEBUG.animationControl).replace(/<[^>]*>/g, ''),
+					DEBUG.animationControl ? 'success' : 'error');
+
+				if (DEBUG.animationControl) {
+					DEBUG.gr2.SetControlLoopCount(DEBUG.animationControl, 0);
+					log('Animation playing (looped)', 'success');
+				}
+
+			} catch (e) {
+				log('Error playing animation: ' + e.message, 'error');
+				console.error(e);
+			}
+		}
+
+		// =============================================
+		// 3D Rendering
+		// =============================================
+		function createScene(verticesArr, indicesArr, textures) {
+			// Clear existing
+			var container = document.getElementById('render-container');
+			container.innerHTML = '';
+
+			if (!verticesArr || verticesArr.length === 0 || !verticesArr[0] || verticesArr[0].length === 0) {
+				container.innerHTML = '<div class="log-error" style="padding: 50px;">No vertex data to render</div>';
+				return;
+			}
+
+			var vertices = verticesArr[0];
+			var indices = indicesArr[0];
+
+			log('Creating scene with ' + vertices.length + ' bytes vertices, ' + indices.length + ' bytes indices', 'info');
+
+			// Parse PNT332 format
+			var PNT332 = new Float32Array(vertices.buffer);
+			var vertexCount = PNT332.length / 8;
+			log('Parsed ' + vertexCount + ' vertices (PNT332 format)', 'data');
+
+			var geometry = new THREE.Geometry();
+			var vertexNormals = [];
+			var uvs = [];
+
+			for (var i = 0; i < vertexCount; i++) {
+				var vx = PNT332[i * 8 + 0];
+				var vy = PNT332[i * 8 + 1];
+				var vz = PNT332[i * 8 + 2];
+
+				geometry.vertices.push(new THREE.Vector3(vx, vy, vz));
+				vertexNormals.push(new THREE.Vector3(PNT332[i * 8 + 3], PNT332[i * 8 + 4], PNT332[i * 8 + 5]));
+				uvs.push(new THREE.Vector2(PNT332[i * 8 + 6], 1.0 - PNT332[i * 8 + 7]));
+			}
+
+			// Parse indices
+			var meshIndices = new Uint16Array(indices.buffer);
+			var triangleCount = meshIndices.length / 3;
+			log('Parsed ' + triangleCount + ' triangles', 'data');
+
+			for (var i = 0; i < triangleCount; i++) {
+				var a = meshIndices[i * 3 + 0];
+				var b = meshIndices[i * 3 + 1];
+				var c = meshIndices[i * 3 + 2];
+
+				if (a >= vertexCount || b >= vertexCount || c >= vertexCount) continue;
+
+				var face = new THREE.Face3(a, b, c);
+				if (vertexNormals[a]) face.vertexNormals[0] = vertexNormals[a];
+				if (vertexNormals[b]) face.vertexNormals[1] = vertexNormals[b];
+				if (vertexNormals[c]) face.vertexNormals[2] = vertexNormals[c];
+
+				geometry.faces.push(face);
+				if (uvs[a] && uvs[b] && uvs[c]) {
+					geometry.faceVertexUvs[0].push([uvs[a], uvs[b], uvs[c]]);
+				}
+			}
+
+			geometry.computeFaceNormals();
+			geometry.computeVertexNormals();
+
+			// Coordinate conversion
+			geometry.applyMatrix(new THREE.Matrix4().set(
+				1, 0, 0, 0,
+				0, 0, 1, 0,
+				0, 1, 0, 0,
+				0, 0, 0, 1
+			));
+
+			log('Geometry has ' + geometry.faces.length + ' faces', 'data');
+
+			// Create material
+			var material;
+			if (textures && textures.length > 0) {
+				var texture = new THREE.Texture(textures[0]);
+				texture.needsUpdate = true;
+				material = new THREE.MeshLambertMaterial({ color: 0xffffff, map: texture, side: THREE.BackSide });
+				log('Created textured material', 'success');
+			} else {
+				material = new THREE.MeshLambertMaterial({ color: 0x888888, side: THREE.DoubleSide });
+				log('Created default material (no texture)', 'warn');
+			}
+
+			DEBUG.mesh3d = new THREE.Mesh(geometry, material);
+
+			// Scene setup
+			DEBUG.scene = new THREE.Scene();
+			DEBUG.scene.add(new THREE.AmbientLight(0x606060));
+
+			var light = new THREE.DirectionalLight(0xffffff, 0.8);
+			light.position.set(10, 20, 10);
+			DEBUG.scene.add(light);
+
+			DEBUG.scene.add(new THREE.AxisHelper(50));
+			DEBUG.scene.add(DEBUG.mesh3d);
+
+			// Camera
+			DEBUG.camera = new THREE.PerspectiveCamera(45, 800/600, 0.1, 10000);
+			DEBUG.camera.position.set(25, 35, 25);
+			DEBUG.camera.lookAt(new THREE.Vector3(0, 10, 0));
+
+			// Renderer
+			DEBUG.renderer = new THREE.WebGLRenderer({ antialias: true });
+			DEBUG.renderer.setSize(800, 600);
+			DEBUG.renderer.setClearColor(0x0d1117);
+			container.appendChild(DEBUG.renderer.domElement);
+
+			log('3D scene created successfully', 'success');
+
+			// Start animation
+			animateScene();
+		}
+
+		function animateScene() {
+			requestAnimationFrame(animateScene);
+
+			if (DEBUG.rotating && DEBUG.mesh3d) {
+				DEBUG.mesh3d.rotation.y += 0.005;
+			}
+
+			if (DEBUG.renderer && DEBUG.scene && DEBUG.camera) {
+				DEBUG.renderer.render(DEBUG.scene, DEBUG.camera);
+			}
+		}
+
+		function tryRender() {
+			log('Attempting to render model...', 'info');
+
+			var info = DEBUG.fileInfo;
+
+			if (info.MeshCount === 0) {
+				log('No meshes to render', 'warn');
+				return;
+			}
+
+			// Get first mesh
+			var mesh = info.Meshes[0];
+			previewMesh(0);
+		}
+
+		function toggleRotation() {
+			DEBUG.rotating = !DEBUG.rotating;
+		}
+
+		function resetCamera() {
+			if (DEBUG.camera) {
+				DEBUG.camera.position.set(25, 35, 25);
+				DEBUG.camera.lookAt(new THREE.Vector3(0, 10, 0));
+			}
+		}
+
+		// =============================================
+		// Memory Inspector
+		// =============================================
+		function inspectMemory() {
+			var addrInput = document.getElementById('mem-address').value;
+			var length = parseInt(document.getElementById('mem-length').value) || 256;
+			var addr = parseInt(addrInput, 16) || parseInt(addrInput, 10);
+
+			var container = document.getElementById('memory-view');
+
+			if (!DEBUG.gr2) {
+				container.innerHTML = '<span class="log-error">Runtime not initialized</span>';
+				return;
+			}
+
+			try {
+				var html = '';
+				var ascii = '';
+
+				for (var i = 0; i < length; i++) {
+					if (i % 16 === 0) {
+						if (i > 0) {
+							html += '  <span class="hex-ascii">' + ascii + '</span>\n';
+							ascii = '';
+						}
+						html += '<span class="hex-offset">' + (addr + i).toString(16).padStart(8, '0') + '</span>: ';
+					}
+
+					var byte = DEBUG.gr2.runtime.get_byte_ptr(addr + i);
+					html += '<span class="hex-byte">' + byte.toString(16).padStart(2, '0') + '</span> ';
+					ascii += (byte >= 32 && byte < 127) ? String.fromCharCode(byte) : '.';
+				}
+
+				html += '  <span class="hex-ascii">' + ascii + '</span>';
+				container.innerHTML = html;
+
+			} catch (e) {
+				container.innerHTML = '<span class="log-error">Error reading memory: ' + e.message + '</span>';
+			}
+		}
+
+		// =============================================
+		// Main
+		// =============================================
+		function loadSelectedFile() {
+			var select = document.getElementById('gr2-select');
+			loadGR2File(select.value);
+		}
+
+		function analyzeCurrentFile() {
+			if (!DEBUG.fileInfo) {
+				log('No file loaded', 'error');
+				return;
+			}
+
+			log('=== FULL ANALYSIS ===', 'info');
+
+			var info = DEBUG.fileInfo;
+			log('File: ' + (info.FromFileName || 'N/A'), 'data');
+			log('Textures: ' + info.TextureCount, 'data');
+			log('Materials: ' + info.MaterialCount, 'data');
+			log('Skeletons: ' + info.SkeletonCount + ' (' + info.Skeletons.length + ' parsed)', 'data');
+			log('Meshes: ' + info.MeshCount + ' (' + info.Meshes.length + ' parsed)', 'data');
+			log('Models: ' + info.ModelCount + ' (' + info.Models.length + ' parsed)', 'data');
+			log('TrackGroups: ' + info.TrackGroupCount, 'data');
+			log('Animations: ' + info.AnimationCount, 'data');
+
+			// Check each component
+			info.Models.forEach(function(model, i) {
+				log('Model ' + i + ': ' + model.Name + ', Skeleton: ' + formatPtr(model.Skeleton).replace(/<[^>]*>/g, '') + ', MeshBindings: ' + model.MeshBindingsCount, 'data');
+			});
+
+			info.Meshes.forEach(function(mesh, i) {
+				try {
+					var vc = DEBUG.gr2.GetMeshVertexCount(mesh._ptr);
+					var ic = DEBUG.gr2.GetMeshIndexCount(mesh._ptr);
+					log('Mesh ' + i + ': ' + mesh.Name + ', Vertices: ' + vc + ', Indices: ' + ic, 'data');
+				} catch (e) {
+					log('Mesh ' + i + ': ERROR - ' + e.message, 'error');
+				}
+			});
+
+			log('=== END ANALYSIS ===', 'info');
+		}
+
+		window.onload = function() {
+			updateLoadingStatus('Loading granny2.bin...');
+
+			var xhr = new XMLHttpRequest();
+			xhr.open('GET', 'granny2.bin', true);
+			xhr.responseType = 'arraybuffer';
+			xhr.onload = function() {
+				if (this.status === 200) {
+					updateLoadingStatus('Initializing runtime...');
+
+					if (initGranny2(this.response)) {
+						document.getElementById('loading-overlay').classList.add('hidden');
+
+						// Auto-load default file
+						loadSelectedFile();
+					} else {
+						updateLoadingStatus('Failed to initialize runtime');
+					}
+				} else {
+					updateLoadingStatus('Failed to load granny2.bin (HTTP ' + this.status + ')');
+				}
+			};
+			xhr.onerror = function() {
+				updateLoadingStatus('Network error loading granny2.bin');
+			};
+			xhr.send(null);
+		};
+	</script>
+</body>
+</html>

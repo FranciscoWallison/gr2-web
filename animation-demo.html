@@ -334,88 +334,158 @@
 		}
 
 		function loadModel(bin_granny2, bin_gr2_object) {
-			gr2 = new Granny2(bin_granny2);
+			console.log('=== Starting Model Load ===');
+			console.log('granny2.bin size:', bin_granny2.byteLength);
+			console.log('gr2 file size:', bin_gr2_object.byteLength);
 
-			console.log("Granny version match:", gr2.VersionMatch(2, 1, 0, 5));
+			try {
+				gr2 = new Granny2(bin_granny2);
+				console.log('Granny2 runtime created');
 
-			// Create character entity
-			character = new CharacterEntity(gr2);
-			character.load(bin_gr2_object);
+				var versionMatch = gr2.VersionMatch(2, 1, 0, 5);
+				console.log('Granny version match (2.1.0.5):', versionMatch);
 
-			// Update UI
-			document.getElementById('model-count').textContent = character.fileInfo.ModelCount;
-			document.getElementById('mesh-count').textContent = character.fileInfo.MeshCount;
-			document.getElementById('bone-count').textContent = character.fileInfo.Skeletons[0].BoneCount;
-			document.getElementById('anim-count').textContent = character.fileInfo.AnimationCount;
+				// Create character entity
+				console.log('Creating CharacterEntity...');
+				character = new CharacterEntity(gr2);
+				character.load(bin_gr2_object);
 
-			// List animations
-			var animList = document.getElementById('animation-list');
-			var animations = gr2.GetAnimations(character.fileInfoPtr);
+				console.log('CharacterEntity loaded successfully');
+				console.log('Meshes extracted:', character.meshes.length);
+				console.log('FileInfo:', character.fileInfo);
 
-			animations.forEach(function(anim, index) {
-				var div = document.createElement('div');
-				div.className = 'anim-item';
-				div.innerHTML = '<span>' + anim.name + '</span><span>' + anim.duration.toFixed(2) + 's</span>';
-				div.onclick = function() {
-					// Direct animation play
-					var ctrl = character.animController;
-					if (ctrl.animationControl) {
-						gr2.FreeControl(ctrl.animationControl);
+				// Update UI
+				document.getElementById('model-count').textContent = character.fileInfo.ModelCount;
+				document.getElementById('mesh-count').textContent = character.fileInfo.MeshCount;
+				document.getElementById('bone-count').textContent =
+					character.fileInfo.Skeletons.length > 0 ? character.fileInfo.Skeletons[0].BoneCount : 0;
+				document.getElementById('anim-count').textContent = character.fileInfo.AnimationCount;
+
+				// List animations
+				var animList = document.getElementById('animation-list');
+				animList.innerHTML = '';
+
+				// Get animations directly from file info
+				var fileInfo = character.fileInfo;
+				console.log('AnimationCount:', fileInfo.AnimationCount);
+
+				if (fileInfo.AnimationCount > 0 && fileInfo.Animations) {
+					for (var i = 0; i < fileInfo.AnimationCount; i++) {
+						try {
+							var animPtr = gr2.runtime.get_dword_ptr(fileInfo.Animations + i * 4);
+							if (animPtr) {
+								var animStruct = Granny2.readStructure(
+									gr2.runtime.cpu,
+									animPtr,
+									Granny2.structs.granny_animation
+								);
+
+								var div = document.createElement('div');
+								div.className = 'anim-item';
+								div.innerHTML = '<span>' + (animStruct.Name || 'Animation ' + i) + '</span><span>' + animStruct.Duration.toFixed(2) + 's</span>';
+
+								(function(ptr, name) {
+									div.onclick = function() {
+										console.log('Playing animation:', name);
+										var ctrl = character.animController;
+										if (ctrl.animationControl) {
+											gr2.FreeControl(ctrl.animationControl);
+										}
+										ctrl.animationControl = gr2.PlayControlledAnimation(0, ptr, ctrl.modelInstance);
+										if (ctrl.animationControl) {
+											gr2.SetControlLoopCount(ctrl.animationControl, 0);
+											console.log('Animation started, control:', '0x' + ctrl.animationControl.toString(16));
+										} else {
+											console.error('PlayControlledAnimation returned null');
+										}
+
+										document.querySelectorAll('.anim-item').forEach(function(el) {
+											el.classList.remove('active');
+										});
+										div.classList.add('active');
+									};
+								})(animPtr, animStruct.Name);
+
+								animList.appendChild(div);
+								console.log('Added animation to list:', animStruct.Name);
+							}
+						} catch (e) {
+							console.error('Error processing animation ' + i + ':', e);
+						}
 					}
-					ctrl.animationControl = gr2.PlayControlledAnimation(0, anim.ptr, ctrl.modelInstance);
-					gr2.SetControlLoopCount(ctrl.animationControl, 0);
-
-					// Update active state
-					document.querySelectorAll('.anim-item').forEach(function(el) {
-						el.classList.remove('active');
-					});
-					div.classList.add('active');
-				};
-				animList.appendChild(div);
-			});
-
-			// Extract mesh data for rendering
-			var vertices = [];
-			var indices = [];
-
-			for (var i = 0; i < character.meshes.length; i++) {
-				vertices.push(character.meshes[i].vertices);
-				indices.push(character.meshes[i].indices);
-			}
-
-			// Extract textures
-			var textures = [];
-			var textureCount = character.fileInfo.TextureCount;
-			var texturePtrs = character.fileInfo.Textures;
-
-			for (var i = 0; i < textureCount; i++) {
-				var texture_va = gr2.runtime.get_dword_ptr(texturePtrs + 4 * i);
-				var textureStruct = Granny2.readStructure(gr2.runtime.cpu, texture_va, Granny2.structs.granny_texture);
-				var texture_data = gr2.CopyTextureImage(texture_va);
-
-				var canvas = document.createElement('canvas');
-				canvas.width = textureStruct.Width;
-				canvas.height = textureStruct.Height;
-
-				var ctx = canvas.getContext('2d');
-				var imgd = ctx.getImageData(0, 0, canvas.width, canvas.height);
-				for (var j = 0; j < texture_data.length; j++) {
-					imgd.data[j] = texture_data[j];
+				} else {
+					animList.innerHTML = '<div style="color: #888;">No animations in this file</div>';
 				}
-				ctx.putImageData(imgd, 0, 0);
 
-				textures.push(canvas);
+				// Extract mesh data for rendering
+				var vertices = [];
+				var indices = [];
+
+				console.log('Extracting mesh data for rendering...');
+				for (var i = 0; i < character.meshes.length; i++) {
+					console.log('Mesh ' + i + ':', character.meshes[i].name,
+						'vertices:', character.meshes[i].vertices.length,
+						'indices:', character.meshes[i].indices.length);
+					vertices.push(character.meshes[i].vertices);
+					indices.push(character.meshes[i].indices);
+				}
+
+				if (vertices.length === 0) {
+					console.error('No meshes to render!');
+					document.getElementById('loading').textContent = 'Error: No meshes found in file';
+					return;
+				}
+
+				// Extract textures
+				var textures = [];
+				var textureCount = character.fileInfo.TextureCount;
+				var texturePtrs = character.fileInfo.Textures;
+
+				console.log('Extracting', textureCount, 'textures...');
+
+				for (var i = 0; i < textureCount; i++) {
+					try {
+						var texture_va = gr2.runtime.get_dword_ptr(texturePtrs + 4 * i);
+						var textureStruct = Granny2.readStructure(gr2.runtime.cpu, texture_va, Granny2.structs.granny_texture);
+						console.log('Texture ' + i + ':', textureStruct.Width + 'x' + textureStruct.Height);
+
+						var texture_data = gr2.CopyTextureImage(texture_va);
+
+						var canvas = document.createElement('canvas');
+						canvas.width = textureStruct.Width;
+						canvas.height = textureStruct.Height;
+
+						var ctx = canvas.getContext('2d');
+						var imgd = ctx.getImageData(0, 0, canvas.width, canvas.height);
+						for (var j = 0; j < texture_data.length; j++) {
+							imgd.data[j] = texture_data[j];
+						}
+						ctx.putImageData(imgd, 0, 0);
+
+						textures.push(canvas);
+					} catch (e) {
+						console.error('Error extracting texture ' + i + ':', e);
+					}
+				}
+
+				console.log('Extracted', textures.length, 'textures');
+
+				// Create 3D scene
+				console.log('Creating 3D scene...');
+				createScene(vertices, indices, textures);
+
+				// Hide loading, show content
+				document.getElementById('loading').style.display = 'none';
+				document.getElementById('main-content').style.display = 'block';
+
+				// Start animation loop
+				console.log('Starting animation loop');
+				animate();
+
+			} catch (e) {
+				console.error('Error loading model:', e);
+				document.getElementById('loading').textContent = 'Error: ' + e.message;
 			}
-
-			// Create 3D scene
-			createScene(vertices, indices, textures);
-
-			// Hide loading, show content
-			document.getElementById('loading').style.display = 'none';
-			document.getElementById('main-content').style.display = 'block';
-
-			// Start animation loop
-			animate();
 		}
 
 		window.onload = function() {

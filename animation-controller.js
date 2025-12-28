@@ -507,17 +507,38 @@
 	entityProto.load = function(gr2Buffer, animBuffer) {
 		var gr2 = this.granny2;
 
+		console.log('[CharacterEntity] Loading GR2 file (' + gr2Buffer.byteLength + ' bytes)...');
+
 		// Load model file
 		var grannyFile = gr2.ReadEntireFileFromMemory(gr2Buffer);
+		console.log('[CharacterEntity] ReadEntireFileFromMemory returned:', grannyFile ? '0x' + grannyFile.toString(16) : 'null');
+
+		if (!grannyFile) {
+			throw new Error('Failed to read GR2 file from memory');
+		}
+
 		var fileInfoPtr = gr2.GetFileInfo(grannyFile);
+		console.log('[CharacterEntity] GetFileInfo returned:', fileInfoPtr ? '0x' + fileInfoPtr.toString(16) : 'null');
+
+		if (!fileInfoPtr) {
+			throw new Error('Failed to get file info');
+		}
+
 		var fileInfo = Granny2.readStructure(gr2.runtime.cpu, fileInfoPtr, Granny2.structs.granny_file_info);
 
 		this.fileInfo = fileInfo;
 		this.fileInfoPtr = fileInfoPtr;
+		this.grannyFile = grannyFile;
 
+		console.log('[CharacterEntity] === File Info ===');
+		console.log('[CharacterEntity] FromFileName:', fileInfo.FromFileName);
 		console.log('[CharacterEntity] Models:', fileInfo.ModelCount);
 		console.log('[CharacterEntity] Meshes:', fileInfo.MeshCount);
+		console.log('[CharacterEntity] Skeletons:', fileInfo.SkeletonCount);
+		console.log('[CharacterEntity] Textures:', fileInfo.TextureCount);
+		console.log('[CharacterEntity] Materials:', fileInfo.MaterialCount);
 		console.log('[CharacterEntity] Animations:', fileInfo.AnimationCount);
+		console.log('[CharacterEntity] TrackGroups:', fileInfo.TrackGroupCount);
 
 		if (fileInfo.ModelCount === 0) {
 			throw new Error('No models in GR2 file');
@@ -525,11 +546,15 @@
 
 		// Get first model
 		var model = fileInfo.Models[0];
-		var skeletonPtr = model.Skeleton;
-		var skeleton = fileInfo.Skeletons[0];
-		var boneCount = skeleton.BoneCount;
+		console.log('[CharacterEntity] Model[0]:', model.Name, 'ptr:', '0x' + model._ptr.toString(16));
+		console.log('[CharacterEntity] Model Skeleton ptr:', model.Skeleton ? '0x' + model.Skeleton.toString(16) : 'null');
+		console.log('[CharacterEntity] Model MeshBindingsCount:', model.MeshBindingsCount);
 
-		console.log('[CharacterEntity] Skeleton bones:', boneCount);
+		var skeletonPtr = model.Skeleton;
+		var skeleton = fileInfo.Skeletons.length > 0 ? fileInfo.Skeletons[0] : null;
+		var boneCount = skeleton ? skeleton.BoneCount : 0;
+
+		console.log('[CharacterEntity] Skeleton:', skeleton ? skeleton.Name : 'none', 'Bones:', boneCount);
 
 		// Create animation controller
 		this.animController = new AnimationController(
@@ -539,55 +564,80 @@
 			boneCount
 		);
 
-		// Extract meshes
-		for (var i = 0; i < model.MeshBindingsCount; i++) {
-			var meshBinding = model.MeshBindings[i];
+		// Extract meshes - use the Meshes array from fileInfo directly
+		console.log('[CharacterEntity] Extracting meshes...');
 
-			// Find the mesh in file info
-			var meshPtr = meshBinding.Mesh || meshBinding._ptr;
-			var mesh = null;
-			for (var j = 0; j < fileInfo.Meshes.length; j++) {
-				if (fileInfo.Meshes[j]._ptr === meshPtr) {
-					mesh = fileInfo.Meshes[j];
-					break;
+		for (var i = 0; i < fileInfo.MeshCount; i++) {
+			var mesh = fileInfo.Meshes[i];
+			var meshPtr = mesh._ptr;
+
+			console.log('[CharacterEntity] Processing Mesh[' + i + ']:', mesh.Name, 'ptr:', '0x' + meshPtr.toString(16));
+
+			try {
+				// Get mesh data
+				var vertexCount = gr2.GetMeshVertexCount(meshPtr);
+				var indexCount = gr2.GetMeshIndexCount(meshPtr);
+
+				console.log('[CharacterEntity]   Vertices:', vertexCount, 'Indices:', indexCount);
+
+				if (vertexCount === 0) {
+					console.warn('[CharacterEntity]   Skipping mesh with 0 vertices');
+					continue;
 				}
+
+				var vertices = gr2.CopyMeshVertices(meshPtr);
+				var indices = gr2.CopyMeshIndices(meshPtr);
+
+				console.log('[CharacterEntity]   Copied', vertices.length, 'bytes vertices,', indices.length, 'bytes indices');
+
+				var vertexType = gr2.GetMeshVertexType(meshPtr);
+				console.log('[CharacterEntity]   VertexType:', '0x' + vertexType.toString(16));
+
+				// Create mesh deformer for skinning (may fail for rigid meshes)
+				var deformer = null;
+				var binding = null;
+
+				try {
+					var isRigid = gr2.MeshIsRigid(meshPtr);
+					console.log('[CharacterEntity]   IsRigid:', isRigid);
+
+					if (!isRigid && skeletonPtr) {
+						deformer = gr2.NewMeshDeformer(vertexType);
+						binding = gr2.NewMeshBinding(meshPtr, skeletonPtr, skeletonPtr);
+						console.log('[CharacterEntity]   Deformer:', '0x' + (deformer || 0).toString(16), 'Binding:', '0x' + (binding || 0).toString(16));
+					}
+				} catch (e) {
+					console.warn('[CharacterEntity]   Could not create deformer/binding:', e.message);
+				}
+
+				this.meshes.push({
+					ptr: meshPtr,
+					name: mesh.Name,
+					vertices: vertices,
+					indices: indices,
+					vertexCount: vertexCount,
+					indexCount: indexCount,
+					deformedVertices: new Uint8Array(vertices.length)
+				});
+
+				this.meshDeformers.push(deformer);
+				this.meshBindings.push(binding);
+
+				console.log('[CharacterEntity]   Mesh added successfully');
+
+			} catch (e) {
+				console.error('[CharacterEntity]   Error processing mesh:', e.message);
 			}
-
-			if (!mesh) {
-				console.warn('[CharacterEntity] Mesh not found for binding', i);
-				continue;
-			}
-
-			// Get mesh data
-			var vertices = gr2.CopyMeshVertices(meshPtr);
-			var indices = gr2.CopyMeshIndices(meshPtr);
-			var vertexType = gr2.GetMeshVertexType(meshPtr);
-			var vertexCount = gr2.GetMeshVertexCount(meshPtr);
-
-			// Create mesh deformer for skinning
-			var deformer = gr2.NewMeshDeformer(vertexType);
-			var binding = gr2.NewMeshBinding(meshPtr, skeletonPtr, skeletonPtr);
-
-			this.meshes.push({
-				ptr: meshPtr,
-				name: mesh.Name,
-				vertices: vertices,
-				indices: indices,
-				vertexCount: vertexCount,
-				deformedVertices: new Uint8Array(vertices.length)
-			});
-
-			this.meshDeformers.push(deformer);
-			this.meshBindings.push(binding);
-
-			console.log('[CharacterEntity] Mesh:', mesh.Name, 'Vertices:', vertexCount);
 		}
+
+		console.log('[CharacterEntity] Extracted', this.meshes.length, 'meshes');
 
 		// Load animations from model file
 		this._loadAnimations(fileInfoPtr);
 
 		// Load animations from separate file if provided
 		if (animBuffer) {
+			console.log('[CharacterEntity] Loading separate animation file...');
 			var animGrannyFile = gr2.ReadEntireFileFromMemory(animBuffer);
 			var animFileInfoPtr = gr2.GetFileInfo(animGrannyFile);
 			this._loadAnimations(animFileInfoPtr);
@@ -603,27 +653,75 @@
 			console.log('[CharacterEntity] Animation ended:', state);
 		};
 
-		// Start in idle
+		// Start in idle if we have an idle animation
 		if (this.animController.animations[AnimationState.IDLE]) {
 			this.animController.stop();
 		}
 
 		this.isLoaded = true;
-		console.log('[CharacterEntity] Loaded successfully');
+		console.log('[CharacterEntity] === Load Complete ===');
+		console.log('[CharacterEntity] Meshes:', this.meshes.length);
+		console.log('[CharacterEntity] Animations registered:', Object.keys(this.animController.animations).length);
 	};
 
 	/**
 	 * Load animations from file info
 	 */
 	entityProto._loadAnimations = function(fileInfoPtr) {
-		var animations = this.granny2.GetAnimations(fileInfoPtr);
+		console.log('[CharacterEntity] Loading animations from file info:', '0x' + fileInfoPtr.toString(16));
 
-		for (var i = 0; i < animations.length; i++) {
-			var anim = animations[i];
-			this.animController.registerAnimationByName(anim.name, anim.ptr, anim.duration);
+		var fileInfo = Granny2.readStructure(
+			this.granny2.runtime.cpu,
+			fileInfoPtr,
+			Granny2.structs.granny_file_info
+		);
+
+		console.log('[CharacterEntity] AnimationCount:', fileInfo.AnimationCount);
+		console.log('[CharacterEntity] Animations ptr:', fileInfo.Animations ? '0x' + fileInfo.Animations.toString(16) : 'null');
+
+		if (fileInfo.AnimationCount === 0 || !fileInfo.Animations) {
+			console.log('[CharacterEntity] No animations in this file');
+			return;
 		}
 
-		console.log('[CharacterEntity] Loaded', animations.length, 'animations');
+		var animations = [];
+
+		for (var i = 0; i < fileInfo.AnimationCount; i++) {
+			try {
+				var animPtr = this.granny2.runtime.get_dword_ptr(fileInfo.Animations + i * 4);
+				console.log('[CharacterEntity] Animation[' + i + '] ptr:', animPtr ? '0x' + animPtr.toString(16) : 'null');
+
+				if (animPtr) {
+					var animStruct = Granny2.readStructure(
+						this.granny2.runtime.cpu,
+						animPtr,
+						Granny2.structs.granny_animation
+					);
+
+					console.log('[CharacterEntity]   Name:', animStruct.Name);
+					console.log('[CharacterEntity]   Duration:', animStruct.Duration.toFixed(3) + 's');
+					console.log('[CharacterEntity]   TrackGroupCount:', animStruct.TrackGroupCount);
+
+					var registered = this.animController.registerAnimationByName(
+						animStruct.Name,
+						animPtr,
+						animStruct.Duration
+					);
+
+					animations.push({
+						ptr: animPtr,
+						name: animStruct.Name,
+						duration: animStruct.Duration,
+						registered: registered
+					});
+				}
+			} catch (e) {
+				console.error('[CharacterEntity] Error reading animation ' + i + ':', e.message);
+			}
+		}
+
+		console.log('[CharacterEntity] Processed', animations.length, 'animations');
+		console.log('[CharacterEntity] Registered states:', Object.keys(this.animController.animations));
 	};
 
 	// Character control methods
