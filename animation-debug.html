@@ -327,25 +327,39 @@
     // Memory Reading Helpers (manual offset reading)
     // ==========================================
     const MemHelper = {
-      readStr(gr2, ptr) {
-        if (!ptr) return '';
+      // Valid memory range for Granny2 DLL (loaded at 0x10000000)
+      MIN_VALID_ADDR: 0x10000000,
+      MAX_VALID_ADDR: 0x20000000,
+
+      isValidPtr(ptr) {
+        return ptr && ptr >= this.MIN_VALID_ADDR && ptr < this.MAX_VALID_ADDR;
+      },
+
+      readStr(gr2, ptr, maxLen = 256) {
+        if (!this.isValidPtr(ptr)) return '';
         try {
-          return gr2.runtime.cpu.memory.read_string(
-            gr2.runtime.cpu.translate_address_read(ptr)
-          );
+          const physAddr = gr2.runtime.cpu.translate_address_read(ptr);
+          const mem = gr2.runtime.cpu.memory.mem8;
+          let str = '';
+          for (let i = 0; i < maxLen; i++) {
+            const byte = mem[physAddr + i];
+            if (byte === 0) break;
+            str += String.fromCharCode(byte);
+          }
+          return str;
         } catch (e) {
           return '';
         }
       },
 
       readF32(gr2, addr) {
+        if (!this.isValidPtr(addr)) return 0;
         try {
-          const bytes = new Uint8Array(4);
-          for (let i = 0; i < 4; i++) {
-            bytes[i] = gr2.runtime.cpu.memory.mem8[
-              gr2.runtime.cpu.translate_address_read(addr + i)
-            ];
-          }
+          const physAddr = gr2.runtime.cpu.translate_address_read(addr);
+          const mem = gr2.runtime.cpu.memory.mem8;
+          const bytes = new Uint8Array([
+            mem[physAddr], mem[physAddr + 1], mem[physAddr + 2], mem[physAddr + 3]
+          ]);
           return new Float32Array(bytes.buffer)[0];
         } catch (e) {
           return 0;
@@ -353,11 +367,13 @@
       },
 
       readI32(gr2, addr) {
-        return gr2.runtime.get_dword_ptr(addr) | 0; // Force signed
+        if (!this.isValidPtr(addr)) return 0;
+        return gr2.runtime.get_dword_ptr(addr) | 0;
       },
 
       readU32(gr2, addr) {
-        return gr2.runtime.get_dword_ptr(addr) >>> 0; // Force unsigned
+        if (!this.isValidPtr(addr)) return 0;
+        return gr2.runtime.get_dword_ptr(addr) >>> 0;
       }
     };
 
@@ -533,6 +549,12 @@
           try {
             const animPtr = gr2.runtime.get_dword_ptr(fileInfo.Animations + 4 * i);
 
+            // Validate pointer before reading
+            if (!MemHelper.isValidPtr(animPtr)) {
+              Logger.warn(`Animation ${i}: Invalid pointer 0x${animPtr.toString(16)}`);
+              continue;
+            }
+
             const namePtr = MemHelper.readU32(gr2, animPtr + 0);
             const duration = MemHelper.readF32(gr2, animPtr + 4);
             const timeStep = MemHelper.readF32(gr2, animPtr + 8);
@@ -567,6 +589,12 @@
         for (let i = 0; i < fileInfo.TrackGroupCount; i++) {
           try {
             const tgPtr = gr2.runtime.get_dword_ptr(fileInfo.TrackGroups + 4 * i);
+
+            // Validate pointer before reading
+            if (!MemHelper.isValidPtr(tgPtr)) {
+              Logger.warn(`TrackGroup ${i}: Invalid pointer 0x${tgPtr.toString(16)}`);
+              continue;
+            }
 
             const namePtr = MemHelper.readU32(gr2, tgPtr + 0);
             const vectorTrackCount = MemHelper.readU32(gr2, tgPtr + 4);
@@ -623,6 +651,12 @@
             try {
               // Get pointer to bone (array of pointers)
               const bonePtr = gr2.runtime.get_dword_ptr(skeleton.Bones + 4 * i);
+
+              // Validate pointer before reading
+              if (!MemHelper.isValidPtr(bonePtr)) {
+                Logger.warn(`Bone ${i}: Invalid pointer 0x${bonePtr.toString(16)}`);
+                continue;
+              }
 
               const namePtr = MemHelper.readU32(gr2, bonePtr + 0);
               const parentIndex = MemHelper.readI32(gr2, bonePtr + 4);
