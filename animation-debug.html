@@ -1,11 +1,17 @@
 <!DOCTYPE html>
 <html lang="en">
+
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>GR2 Animation Debug & State Machine</title>
   <style>
-    * { margin: 0; padding: 0; box-sizing: border-box; }
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
     body {
       font-family: 'Consolas', monospace;
       background: #1a1a2e;
@@ -13,6 +19,7 @@
       display: flex;
       height: 100vh;
     }
+
     #sidebar {
       width: 420px;
       background: #16213e;
@@ -20,24 +27,43 @@
       overflow-y: auto;
       border-right: 2px solid #0f3460;
     }
+
     #render-area {
       flex: 1;
       display: flex;
       flex-direction: column;
     }
+
     #render-container {
       flex: 1;
       position: relative;
     }
+
     #timeline {
       height: 80px;
       background: #0f0f23;
       padding: 10px;
       border-top: 2px solid #0f3460;
     }
-    h1 { font-size: 18px; margin-bottom: 15px; color: #4a9eff; }
-    h2 { font-size: 14px; margin: 15px 0 10px; color: #e94560; }
-    h3 { font-size: 12px; margin: 10px 0 5px; color: #4ea; }
+
+    h1 {
+      font-size: 18px;
+      margin-bottom: 15px;
+      color: #4a9eff;
+    }
+
+    h2 {
+      font-size: 14px;
+      margin: 15px 0 10px;
+      color: #e94560;
+    }
+
+    h3 {
+      font-size: 12px;
+      margin: 10px 0 5px;
+      color: #4ea;
+    }
+
     .btn {
       background: #4a9eff;
       color: white;
@@ -49,10 +75,25 @@
       font-size: 12px;
       transition: all 0.2s;
     }
-    .btn:hover { background: #3a8eef; transform: scale(1.02); }
-    .btn.active { background: #e94560; }
-    .btn.state-btn { min-width: 100px; }
-    .btn.state-btn.current { background: #4e4; box-shadow: 0 0 10px #4e4; }
+
+    .btn:hover {
+      background: #3a8eef;
+      transform: scale(1.02);
+    }
+
+    .btn.active {
+      background: #e94560;
+    }
+
+    .btn.state-btn {
+      min-width: 100px;
+    }
+
+    .btn.state-btn.current {
+      background: #4e4;
+      box-shadow: 0 0 10px #4e4;
+    }
+
     #log {
       background: #0f0f23;
       padding: 10px;
@@ -62,25 +103,53 @@
       border-radius: 4px;
       margin-top: 10px;
     }
-    .log-info { color: #4ae; }
-    .log-warn { color: #ea4; }
-    .log-error { color: #e44; }
-    .log-success { color: #4e4; }
-    .log-anim { color: #e4a; }
-    .log-state { color: #4ea; }
-    .log-bone { color: #ae4; }
+
+    .log-info {
+      color: #4ae;
+    }
+
+    .log-warn {
+      color: #ea4;
+    }
+
+    .log-error {
+      color: #e44;
+    }
+
+    .log-success {
+      color: #4e4;
+    }
+
+    .log-anim {
+      color: #e4a;
+    }
+
+    .log-state {
+      color: #4ea;
+    }
+
+    .log-bone {
+      color: #ae4;
+    }
+
     table {
       width: 100%;
       border-collapse: collapse;
       font-size: 11px;
       margin: 10px 0;
     }
-    th, td {
+
+    th,
+    td {
       border: 1px solid #333;
       padding: 5px;
       text-align: left;
     }
-    th { background: #0f3460; }
+
+    th {
+      background: #0f3460;
+    }
+
     .state-panel {
       background: #1a1a2e;
       padding: 10px;
@@ -88,6 +157,7 @@
       border-radius: 4px;
       border-left: 3px solid #4ea;
     }
+
     .state-indicator {
       display: inline-block;
       width: 12px;
@@ -96,11 +166,24 @@
       margin-right: 8px;
       background: #666;
     }
-    .state-indicator.active { background: #4e4; animation: pulse 1s infinite; }
-    @keyframes pulse {
-      0%, 100% { opacity: 1; }
-      50% { opacity: 0.5; }
+
+    .state-indicator.active {
+      background: #4e4;
+      animation: pulse 1s infinite;
     }
+
+    @keyframes pulse {
+
+      0%,
+      100% {
+        opacity: 1;
+      }
+
+      50% {
+        opacity: 0.5;
+      }
+    }
+
     .animation-list {
       max-height: 200px;
       overflow-y: auto;
@@ -108,24 +191,35 @@
       border-radius: 4px;
       padding: 5px;
     }
+
     .animation-item {
       padding: 5px 10px;
       cursor: pointer;
       border-radius: 3px;
       margin: 2px 0;
     }
-    .animation-item:hover { background: #2a2a4e; }
-    .animation-item.playing { background: #4a9eff33; border-left: 3px solid #4a9eff; }
+
+    .animation-item:hover {
+      background: #2a2a4e;
+    }
+
+    .animation-item.playing {
+      background: #4a9eff33;
+      border-left: 3px solid #4a9eff;
+    }
+
     #timeline-slider {
       width: 100%;
       margin: 10px 0;
     }
+
     .timeline-info {
       display: flex;
       justify-content: space-between;
       font-size: 11px;
       color: #888;
     }
+
     .skeleton-tree {
       font-size: 11px;
       max-height: 150px;
@@ -134,12 +228,14 @@
       padding: 5px;
       border-radius: 4px;
     }
+
     .bone-item {
       padding: 2px 0;
       padding-left: calc(var(--depth) * 15px);
     }
   </style>
 </head>
+
 <body>
   <div id="sidebar">
     <h1>GR2 Animation Debug</h1>
@@ -193,7 +289,8 @@
   <div id="render-area">
     <div id="render-container"></div>
     <div id="timeline">
-      <input type="range" id="timeline-slider" min="0" max="100" value="0" step="0.1" oninput="seekAnimation(this.value)">
+      <input type="range" id="timeline-slider" min="0" max="100" value="0" step="0.1"
+        oninput="seekAnimation(this.value)">
       <div class="timeline-info">
         <span id="timelineCurrent">0.00s</span>
         <span id="timelineAnimation">No animation</span>
@@ -218,7 +315,7 @@
     // Performance utilities
     function throttle(func, limit) {
       let inThrottle;
-      return function(...args) {
+      return function (...args) {
         if (!inThrottle) {
           func.apply(this, args);
           inThrottle = true;
@@ -229,7 +326,7 @@
 
     function debounce(func, wait) {
       let timeout;
-      return function(...args) {
+      return function (...args) {
         clearTimeout(timeout);
         timeout = setTimeout(() => func.apply(this, args), wait);
       };
@@ -271,7 +368,7 @@
       maxLogEntries: 200,
       flushScheduled: false,
 
-      log: function(msg, type = 'info') {
+      log: function (msg, type = 'info') {
         this.buffer.push({ msg, type, time: new Date().toLocaleTimeString() });
         console.log(`[${type.toUpperCase()}]`, msg);
 
@@ -281,7 +378,7 @@
         }
       },
 
-      flush: function() {
+      flush: function () {
         if (this.buffer.length === 0) {
           this.flushScheduled = false;
           return;
@@ -314,13 +411,13 @@
         });
       },
 
-      info: function(msg) { this.log(msg, 'info'); },
-      warn: function(msg) { this.log(msg, 'warn'); },
-      error: function(msg) { this.log(msg, 'error'); },
-      success: function(msg) { this.log(msg, 'success'); },
-      anim: function(msg) { this.log(msg, 'anim'); },
-      state: function(msg) { this.log(msg, 'state'); },
-      bone: function(msg) { this.log(msg, 'bone'); }
+      info: function (msg) { this.log(msg, 'info'); },
+      warn: function (msg) { this.log(msg, 'warn'); },
+      error: function (msg) { this.log(msg, 'error'); },
+      success: function (msg) { this.log(msg, 'success'); },
+      anim: function (msg) { this.log(msg, 'anim'); },
+      state: function (msg) { this.log(msg, 'state'); },
+      bone: function (msg) { this.log(msg, 'bone'); }
     };
 
     // ==========================================
@@ -559,7 +656,10 @@
             const duration = MemHelper.readF32(gr2, animPtr + 4);
             const timeStep = MemHelper.readF32(gr2, animPtr + 8);
             const oversampling = MemHelper.readF32(gr2, animPtr + 12);
-            const trackGroupCount = MemHelper.readU32(gr2, animPtr + 16);
+            // DEPOIS (certo: +16 é ponteiro, +20 é count)
+            const trackGroupsPtr = MemHelper.readU32(gr2, animPtr + 16);
+            const trackGroupCount = MemHelper.readU32(gr2, animPtr + 20);
+
 
             const name = MemHelper.readStr(gr2, namePtr) || `Animation_${i}`;
 
@@ -570,6 +670,8 @@
               duration,
               timeStep,
               oversampling,
+              trackGroupCount,
+              trackGroupsPtr,
               trackGroupCount
             });
 
@@ -1110,4 +1212,5 @@
     init();
   </script>
 </body>
+
 </html>

@@ -1,0 +1,998 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>GR2 Texture Debug & Analysis</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      font-family: 'Consolas', monospace;
+      background: #1a1a2e;
+      color: #eee;
+      display: flex;
+      height: 100vh;
+    }
+    #sidebar {
+      width: 400px;
+      background: #16213e;
+      padding: 15px;
+      overflow-y: auto;
+      border-right: 2px solid #0f3460;
+    }
+    #render-area {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+    }
+    #render-container {
+      flex: 1;
+      position: relative;
+    }
+    #texture-preview {
+      height: 200px;
+      background: #0f0f23;
+      padding: 10px;
+      display: flex;
+      gap: 10px;
+      overflow-x: auto;
+      border-top: 2px solid #0f3460;
+    }
+    #texture-preview canvas {
+      border: 2px solid #4a9eff;
+      max-height: 180px;
+    }
+    h1 { font-size: 18px; margin-bottom: 15px; color: #4a9eff; }
+    h2 { font-size: 14px; margin: 15px 0 10px; color: #e94560; }
+    .btn {
+      background: #4a9eff;
+      color: white;
+      border: none;
+      padding: 8px 15px;
+      margin: 5px 5px 5px 0;
+      border-radius: 4px;
+      cursor: pointer;
+      font-size: 12px;
+    }
+    .btn:hover { background: #3a8eef; }
+    .btn.active { background: #e94560; }
+    #log {
+      background: #0f0f23;
+      padding: 10px;
+      font-size: 11px;
+      max-height: 400px;
+      overflow-y: auto;
+      border-radius: 4px;
+      margin-top: 10px;
+    }
+    .log-info { color: #4ae; }
+    .log-warn { color: #ea4; }
+    .log-error { color: #e44; }
+    .log-success { color: #4e4; }
+    .log-texture { color: #e4a; }
+    .log-uv { color: #4ea; }
+    .log-mesh { color: #ae4; }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 11px;
+      margin: 10px 0;
+    }
+    th, td {
+      border: 1px solid #333;
+      padding: 5px;
+      text-align: left;
+    }
+    th { background: #0f3460; }
+    .texture-info {
+      background: #1a1a2e;
+      padding: 10px;
+      margin: 5px 0;
+      border-radius: 4px;
+      border-left: 3px solid #4a9eff;
+    }
+  </style>
+</head>
+<body>
+  <div id="sidebar">
+    <h1>GR2 Texture Debug</h1>
+
+    <div>
+      <button class="btn" onclick="loadFile('empelium90_0.gr2')">empelium90_0</button>
+      <button class="btn" onclick="loadFile('guildflag90_1.gr2')">guildflag90_1</button>
+      <button class="btn" onclick="loadFile('kguardian90_7.gr2')">kguardian90_7</button>
+      <button class="btn" onclick="loadFile('sguardian90_9.gr2')">sguardian90_9</button>
+      <button class="btn" onclick="loadFile('treasurebox_2.gr2')">treasurebox_2</button>
+    </div>
+
+    <div>
+      <button class="btn" id="btnRotate" onclick="toggleRotation()">Rotation: OFF</button>
+      <button class="btn" id="btnWireframe" onclick="toggleWireframe()">Wireframe: OFF</button>
+      <button class="btn" onclick="clearLog()">Clear Log</button>
+    </div>
+
+    <h2>Texture Analysis</h2>
+    <div id="texture-analysis"></div>
+
+    <h2>Debug Log</h2>
+    <div id="log"></div>
+  </div>
+
+  <div id="render-area">
+    <div id="render-container"></div>
+    <div id="texture-preview">
+      <span style="color:#666;padding:20px;">Textures will appear here after loading...</span>
+    </div>
+  </div>
+
+  <script src="three.min.js"></script>
+  <script src="const.js"></script>
+  <script src="main.js"></script>
+  <script src="memory.js"></script>
+  <script src="io.js"></script>
+  <script src="v86.js"></script>
+  <script src="fpu.js"></script>
+  <script src="granny2.js"></script>
+  <script src="granny2.subs.js"></script>
+  <script src="granny2.def.js"></script>
+  <script src="pe_env.js"></script>
+
+  <script>
+    // Debug logging system
+    const Logger = {
+      log: function(msg, type = 'info') {
+        const logEl = document.getElementById('log');
+        const time = new Date().toLocaleTimeString();
+        const div = document.createElement('div');
+        div.className = 'log-' + type;
+        div.innerHTML = `[${time}] ${msg}`;
+        logEl.appendChild(div);
+        logEl.scrollTop = logEl.scrollHeight;
+        console.log(`[${type.toUpperCase()}]`, msg);
+      },
+      info: function(msg) { this.log(msg, 'info'); },
+      warn: function(msg) { this.log(msg, 'warn'); },
+      error: function(msg) { this.log(msg, 'error'); },
+      success: function(msg) { this.log(msg, 'success'); },
+      texture: function(msg) { this.log(msg, 'texture'); },
+      uv: function(msg) { this.log(msg, 'uv'); },
+      mesh: function(msg) { this.log(msg, 'mesh'); }
+    };
+
+    // Global state
+    let scene, camera, renderer;
+    let currentModel = null;
+    let isRotating = false;
+    let isWireframe = false;
+    let granny2Binary = null;
+    let gr2Instance = null;
+
+    // Texture analysis data
+    let textureData = {
+      textures: [],
+      meshes: [],
+      materialBindings: [],
+      uvRanges: []
+    };
+
+    function clearLog() {
+      document.getElementById('log').innerHTML = '';
+    }
+
+    function init() {
+      Logger.info('Initializing Three.js scene...');
+
+      scene = new THREE.Scene();
+      scene.background = new THREE.Color(0x1a1a2e);
+
+      const container = document.getElementById('render-container');
+      camera = new THREE.PerspectiveCamera(45, container.clientWidth / container.clientHeight, 1, 10000);
+      camera.position.set(25, 35, 25);
+      camera.lookAt(new THREE.Vector3(0, 10, 0));
+
+      renderer = new THREE.WebGLRenderer({ antialias: true });
+      renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 1.5));
+      renderer.setSize(container.clientWidth, container.clientHeight);
+      container.appendChild(renderer.domElement);
+
+      // Lights
+      scene.add(new THREE.AmbientLight(0x404040));
+      const directional = new THREE.DirectionalLight(0xffffff, 0.5);
+      directional.position.set(0, 20, -50);
+      scene.add(directional);
+
+      // Helpers
+      scene.add(new THREE.AxesHelper(100));
+      scene.add(new THREE.GridHelper(100, 10));
+
+      // Mouse controls
+      setupControls();
+
+      window.addEventListener('resize', onWindowResize);
+
+      document.addEventListener('visibilitychange', () => {
+        if (document.hidden) {
+          // don't waste CPU/GPU in background tabs
+          isRotating = false;
+          document.getElementById('btnRotate').textContent = 'Rotation: OFF';
+          document.getElementById('btnRotate').classList.toggle('active', false);
+        }
+      });
+
+      requestRender();
+      loadGranny2Binary();
+    }
+
+    function setupControls() {
+      let isDragging = false;
+      let previousMouse = { x: 0, y: 0 };
+
+      renderer.domElement.addEventListener('mousedown', () => isDragging = true);
+      renderer.domElement.addEventListener('mouseup', () => isDragging = false);
+      renderer.domElement.addEventListener('mousemove', (e) => {
+        if (isDragging && currentModel) {
+          currentModel.rotation.y += (e.offsetX - previousMouse.x) * 0.01;
+          currentModel.rotation.x += (e.offsetY - previousMouse.y) * 0.01;
+          requestRender();
+        }
+        previousMouse = { x: e.offsetX, y: e.offsetY };
+      });
+      renderer.domElement.addEventListener('wheel', (e) => {
+        e.preventDefault();
+        camera.position.z += e.deltaY * 0.1;
+        requestRender();
+      });
+    }
+
+    async function loadGranny2Binary() {
+      try {
+        Logger.info('Loading granny2.bin...');
+        const response = await fetch('granny2.bin');
+        granny2Binary = await response.arrayBuffer();
+        Logger.success('granny2.bin loaded successfully!');
+      } catch (error) {
+        Logger.error('Failed to load granny2.bin: ' + error.message);
+      }
+    }
+
+    async function loadFile(filename) {
+      if (!granny2Binary) {
+        Logger.error('granny2.bin not loaded yet!');
+        return;
+      }
+
+      try {
+        Logger.info(`Loading ${filename}...`);
+
+        const response = await fetch(filename);
+        const arrayBuffer = await response.arrayBuffer();
+
+        Logger.info(`File size: ${arrayBuffer.byteLength} bytes`);
+
+        parseAndAnalyze(arrayBuffer, filename);
+
+      } catch (error) {
+        Logger.error('Error loading file: ' + error.message);
+      }
+    }
+
+    function parseAndAnalyze(gr2ArrayBuffer, filename) {
+      Logger.info('='.repeat(50));
+      Logger.info(`PARSING: ${filename}`);
+      Logger.info('='.repeat(50));
+
+      // Reset texture data
+      textureData = { textures: [], meshes: [], materialBindings: [], uvRanges: [] };
+
+      const gr2 = new Granny2(granny2Binary);
+      gr2Instance = gr2;
+
+      const grannyFilePtr = gr2.ReadEntireFileFromMemory(gr2ArrayBuffer);
+      Logger.info(`Granny file ptr: 0x${grannyFilePtr.toString(16)}`);
+
+      const fileInfoPtr = gr2.GetFileInfo(grannyFilePtr);
+      Logger.info(`File info ptr: 0x${fileInfoPtr.toString(16)}`);
+
+      const fileInfo = Granny2.readStructure(gr2.runtime.cpu, fileInfoPtr, Granny2.structs.granny_file_info);
+
+      Logger.info('--- FILE INFO ---');
+      Logger.info(`Models: ${fileInfo.ModelCount}`);
+      Logger.info(`Meshes: ${fileInfo.MeshCount}`);
+      Logger.info(`Textures: ${fileInfo.TextureCount}`);
+      Logger.info(`Materials: ${fileInfo.MaterialCount}`);
+      Logger.info(`Skeletons: ${fileInfo.SkeletonCount}`);
+      Logger.info(`TrackGroups: ${fileInfo.TrackGroupCount}`);
+      Logger.info(`Animations: ${fileInfo.AnimationCount}`);
+
+      // Analyze textures
+      analyzeTextures(gr2, fileInfo);
+
+      // Analyze animations
+      analyzeAnimations(gr2, fileInfo);
+
+      // Analyze meshes and extract data
+      const meshData = analyzeMeshes(gr2, fileInfo);
+
+      // Render
+      renderModel(meshData, textureData.textures);
+
+      // Update UI
+      updateTextureAnalysis();
+    }
+
+    function analyzeTextures(gr2, fileInfo) {
+      Logger.texture('='.repeat(50));
+      Logger.texture('TEXTURE ANALYSIS');
+      Logger.texture('='.repeat(50));
+
+      const previewContainer = document.getElementById('texture-preview');
+      previewContainer.innerHTML = '';
+
+      for (let i = 0; i < fileInfo.TextureCount; i++) {
+        const texturePtr = gr2.runtime.get_dword_ptr(fileInfo.Textures + 4 * i);
+
+        Logger.texture(`--- Texture ${i} ---`);
+        Logger.texture(`Pointer: 0x${texturePtr.toString(16)}`);
+
+        const textureInfo = Granny2.readStructure(gr2.runtime.cpu, texturePtr, Granny2.structs.granny_texture);
+
+        Logger.texture(`FromFileName: ${textureInfo.FromFileName || 'N/A'}`);
+        Logger.texture(`TextureType: ${textureInfo.TextureType}`);
+        Logger.texture(`Dimensions: ${textureInfo.Width} x ${textureInfo.Height}`);
+        Logger.texture(`Encoding: ${textureInfo.Encoding} (1=RAW, 2=S3TC, 3=BINK)`);
+        Logger.texture(`SubFormat: ${textureInfo.SubFormat}`);
+        Logger.texture(`BytesPerPixel: ${textureInfo.BytesPerPixel}`);
+        Logger.texture(`ShiftForComponent: [${textureInfo.ShiftForComponent.join(', ')}]`);
+        Logger.texture(`BitsForComponent: [${textureInfo.BitsForComponent.join(', ')}]`);
+        Logger.texture(`ImageCount: ${textureInfo.ImageCount}`);
+
+        // Check alpha
+        const hasAlpha = gr2.TextureHasAlpha(texturePtr);
+        Logger.texture(`HasAlpha: ${hasAlpha}`);
+
+        // Copy texture image
+        const pixelData = gr2.CopyTextureImage(texturePtr);
+        Logger.texture(`Pixel data size: ${pixelData.length} bytes`);
+        Logger.texture(`Expected size: ${textureInfo.Width * textureInfo.Height * 4} bytes`);
+
+        // Analyze pixel data
+        let minR = 255, maxR = 0, minG = 255, maxG = 0, minB = 255, maxB = 0, minA = 255, maxA = 0;
+        let transparentPixels = 0;
+
+        for (let p = 0; p < pixelData.length; p += 4) {
+          const r = pixelData[p], g = pixelData[p + 1], b = pixelData[p + 2], a = pixelData[p + 3];
+          minR = Math.min(minR, r); maxR = Math.max(maxR, r);
+          minG = Math.min(minG, g); maxG = Math.max(maxG, g);
+          minB = Math.min(minB, b); maxB = Math.max(maxB, b);
+          minA = Math.min(minA, a); maxA = Math.max(maxA, a);
+          if (a < 255) transparentPixels++;
+        }
+
+        Logger.texture(`R range: [${minR}, ${maxR}]`);
+        Logger.texture(`G range: [${minG}, ${maxG}]`);
+        Logger.texture(`B range: [${minB}, ${maxB}]`);
+        Logger.texture(`A range: [${minA}, ${maxA}]`);
+        Logger.texture(`Transparent pixels: ${transparentPixels} / ${pixelData.length / 4}`);
+
+        // Create canvas
+        const canvas = document.createElement('canvas');
+        canvas.width = textureInfo.Width;
+        canvas.height = textureInfo.Height;
+        canvas.title = `Texture ${i}: ${textureInfo.FromFileName || 'unnamed'} (${textureInfo.Width}x${textureInfo.Height})`;
+
+        const ctx = canvas.getContext('2d');
+        const imageData = ctx.createImageData(textureInfo.Width, textureInfo.Height);
+        imageData.data.set(pixelData);
+        ctx.putImageData(imageData, 0, 0);
+
+        previewContainer.appendChild(canvas);
+
+        // Store texture data
+        const texture = new THREE.CanvasTexture(canvas);
+        texture.needsUpdate = true;
+
+        textureData.textures.push({
+          index: i,
+          ptr: texturePtr,
+          info: textureInfo,
+          hasAlpha,
+          canvas,
+          threeTexture: texture,
+          pixelStats: { minR, maxR, minG, maxG, minB, maxB, minA, maxA, transparentPixels }
+        });
+      }
+
+      Logger.success(`Loaded ${textureData.textures.length} textures`);
+    }
+
+    // Animation data storage
+    let animationData = {
+      trackGroups: [],
+      animations: [],
+      skeleton: null
+    };
+
+    function analyzeAnimations(gr2, fileInfo) {
+      Logger.info('='.repeat(50));
+      Logger.info('ANIMATION ANALYSIS');
+      Logger.info('='.repeat(50));
+
+      animationData = { trackGroups: [], animations: [], skeleton: null };
+
+      // Analyze Skeleton first (needed for bone animation)
+      if (fileInfo.SkeletonCount > 0 && fileInfo.Skeletons) {
+        Logger.info(`--- Skeletons: ${fileInfo.SkeletonCount} ---`);
+        for (let s = 0; s < fileInfo.SkeletonCount; s++) {
+          const skeleton = fileInfo.Skeletons[s];
+          Logger.info(`  Skeleton ${s}: ${skeleton.Name || 'unnamed'}`);
+          Logger.info(`    BoneCount: ${skeleton.BoneCount}`);
+
+          if (skeleton.BoneCount > 0 && skeleton.Bones) {
+            Logger.info(`    Bones:`);
+            // Read first few bones
+            for (let b = 0; b < Math.min(skeleton.BoneCount, 10); b++) {
+              try {
+                // Each bone entry is a pointer in the Bones array
+                const bonePtr = gr2.runtime.get_dword_ptr(skeleton.Bones + 4 * b);
+                const boneName = gr2.runtime.cpu.memory.read_string(
+                  gr2.runtime.cpu.translate_address_read(bonePtr)
+                );
+                Logger.info(`      [${b}] ${boneName}`);
+              } catch(e) {
+                Logger.warn(`      [${b}] Failed to read`);
+              }
+            }
+            if (skeleton.BoneCount > 10) {
+              Logger.info(`      ... and ${skeleton.BoneCount - 10} more bones`);
+            }
+          }
+
+          animationData.skeleton = skeleton;
+        }
+      }
+
+      // Analyze TrackGroups
+      if (fileInfo.TrackGroupCount > 0 && fileInfo.TrackGroups) {
+        Logger.info(`--- TrackGroups: ${fileInfo.TrackGroupCount} ---`);
+        for (let t = 0; t < fileInfo.TrackGroupCount; t++) {
+          try {
+            const trackGroupPtr = gr2.runtime.get_dword_ptr(fileInfo.TrackGroups + 4 * t);
+            Logger.info(`  TrackGroup ${t}: ptr 0x${trackGroupPtr.toString(16)}`);
+
+            // Try to read TrackGroup name
+            const namePtr = gr2.runtime.get_dword_ptr(trackGroupPtr);
+            if (namePtr) {
+              const name = gr2.runtime.cpu.memory.read_string(
+                gr2.runtime.cpu.translate_address_read(namePtr)
+              );
+              Logger.info(`    Name: ${name}`);
+            }
+
+            animationData.trackGroups.push({
+              index: t,
+              ptr: trackGroupPtr
+            });
+          } catch(e) {
+            Logger.warn(`  TrackGroup ${t}: Failed to read`);
+          }
+        }
+      } else {
+        Logger.warn('No TrackGroups found in this file');
+      }
+
+      // Analyze Animations
+      if (fileInfo.AnimationCount > 0 && fileInfo.Animations) {
+        Logger.info(`--- Animations: ${fileInfo.AnimationCount} ---`);
+        for (let a = 0; a < fileInfo.AnimationCount; a++) {
+          try {
+            const animPtr = gr2.runtime.get_dword_ptr(fileInfo.Animations + 4 * a);
+            Logger.success(`  Animation ${a}: ptr 0x${animPtr.toString(16)}`);
+
+            // Read animation structure
+            // granny_animation: Name, Duration, TimeStep, Oversampling, TrackGroupCount, TrackGroups
+            const namePtr = gr2.runtime.get_dword_ptr(animPtr);
+            const duration = gr2.runtime.cpu.memory.readFloat(
+              gr2.runtime.cpu.translate_address_read(animPtr + 4)
+            );
+            const timeStep = gr2.runtime.cpu.memory.readFloat(
+              gr2.runtime.cpu.translate_address_read(animPtr + 8)
+            );
+            const oversampling = gr2.runtime.cpu.memory.readFloat(
+              gr2.runtime.cpu.translate_address_read(animPtr + 12)
+            );
+            const trackGroupCount = gr2.runtime.get_dword_ptr(animPtr + 16);
+
+            let name = 'unknown';
+            if (namePtr) {
+              name = gr2.runtime.cpu.memory.read_string(
+                gr2.runtime.cpu.translate_address_read(namePtr)
+              );
+            }
+
+            Logger.success(`    Name: ${name}`);
+            Logger.info(`    Duration: ${duration.toFixed(3)}s`);
+            Logger.info(`    TimeStep: ${timeStep}`);
+            Logger.info(`    Oversampling: ${oversampling}`);
+            Logger.info(`    TrackGroupCount: ${trackGroupCount}`);
+
+            // Detect animation type from name
+            let animType = 'unknown';
+            const nameLower = name.toLowerCase();
+            if (nameLower.includes('stop') || nameLower.includes('idle') || nameLower.includes('wait')) {
+              animType = 'Stop';
+            } else if (nameLower.includes('attack') || nameLower.includes('atk')) {
+              animType = 'Attackout';
+            } else if (nameLower.includes('damage') || nameLower.includes('hit') || nameLower.includes('hurt')) {
+              animType = 'Damageout';
+            } else if (nameLower.includes('dead') || nameLower.includes('die') || nameLower.includes('death')) {
+              animType = 'Deadout';
+            } else if (nameLower.includes('move') || nameLower.includes('walk') || nameLower.includes('run')) {
+              animType = 'Moveout';
+            }
+            Logger.info(`    Detected Type: ${animType}`);
+
+            animationData.animations.push({
+              index: a,
+              ptr: animPtr,
+              name,
+              duration,
+              timeStep,
+              oversampling,
+              trackGroupCount,
+              type: animType
+            });
+          } catch(e) {
+            Logger.warn(`  Animation ${a}: Failed to read - ${e.message}`);
+          }
+        }
+      } else {
+        Logger.warn('No Animations found in this file');
+        Logger.info('Note: Model-only GR2 files typically don\'t contain animations.');
+        Logger.info('Animations are usually in separate .gr2 files (e.g., monster_attack.gr2)');
+      }
+
+      // Summary
+      Logger.info('--- Animation Summary ---');
+      Logger.info(`Skeleton bones: ${animationData.skeleton ? animationData.skeleton.BoneCount : 0}`);
+      Logger.info(`TrackGroups: ${animationData.trackGroups.length}`);
+      Logger.info(`Animations: ${animationData.animations.length}`);
+
+      if (animationData.animations.length > 0) {
+        Logger.success('Animation types found:');
+        animationData.animations.forEach(a => {
+          Logger.success(`  - ${a.name} (${a.type}) - ${a.duration.toFixed(2)}s`);
+        });
+      }
+    }
+
+    function analyzeMeshes(gr2, fileInfo) {
+      Logger.mesh('='.repeat(50));
+      Logger.mesh('MESH & UV ANALYSIS');
+      Logger.mesh('='.repeat(50));
+
+      const meshData = [];
+
+      // First, analyze Materials in fileInfo
+      Logger.info(`--- Materials in FileInfo: ${fileInfo.MaterialCount} ---`);
+      const materialsMap = new Map();       // ptr -> matInfo
+      const materialToTexture = new Map();  // matPtr -> textureIndex
+
+      if (fileInfo.Materials && fileInfo.MaterialCount > 0) {
+        // First pass: read all materials
+        for (let m = 0; m < fileInfo.MaterialCount; m++) {
+          const matPtr = gr2.runtime.get_dword_ptr(fileInfo.Materials + 4 * m);
+          try {
+            const matInfo = Granny2.readStructure(gr2.runtime.cpu, matPtr, Granny2.structs.granny_material);
+            matInfo._ptr = matPtr;
+            Logger.info(`  Material ${m}: ${matInfo.Name || 'unnamed'}`);
+            Logger.info(`    MapCount: ${matInfo.MapCount}`);
+            Logger.info(`    Texture ptr: 0x${(matInfo.Texture || 0).toString(16)}`);
+            Logger.info(`    Maps ptr: 0x${(matInfo.Maps || 0).toString(16)}`);
+            materialsMap.set(matPtr, matInfo);
+
+            // Direct texture link
+            if (matInfo.Texture) {
+              for (let t = 0; t < textureData.textures.length; t++) {
+                if (textureData.textures[t].ptr === matInfo.Texture) {
+                  Logger.success(`    -> Direct Texture ${t}: ${textureData.textures[t].info.FromFileName}`);
+                  materialToTexture.set(matPtr, t);
+                  break;
+                }
+              }
+            }
+          } catch (e) {
+            Logger.warn(`  Material ${m}: Failed to read (ptr: 0x${matPtr.toString(16)})`);
+          }
+        }
+
+        // Second pass: resolve Maps for materials without direct texture
+        Logger.info(`--- Resolving Material Maps ---`);
+        for (const [matPtr, matInfo] of materialsMap) {
+          if (materialToTexture.has(matPtr)) continue; // Already has texture
+
+          if (matInfo.MapCount > 0 && matInfo.Maps) {
+            Logger.info(`  Resolving maps for: ${matInfo.Name}`);
+            for (let mapIdx = 0; mapIdx < matInfo.MapCount; mapIdx++) {
+              // granny_material_map is 8 bytes: char* Usage (4) + void* Material (4)
+              const mapPtr = matInfo.Maps + mapIdx * 8;
+              const usagePtr = gr2.runtime.get_dword_ptr(mapPtr);
+              const refMatPtr = gr2.runtime.get_dword_ptr(mapPtr + 4);
+
+              let usage = 'unknown';
+              try {
+                usage = gr2.runtime.cpu.memory.read_string(
+                  gr2.runtime.cpu.translate_address_read(usagePtr)
+                );
+              } catch(e) {}
+
+              Logger.info(`    Map ${mapIdx}: Usage="${usage}", RefMaterial=0x${refMatPtr.toString(16)}`);
+
+              // Check if referenced material has a texture
+              if (materialsMap.has(refMatPtr)) {
+                const refMat = materialsMap.get(refMatPtr);
+                if (materialToTexture.has(refMatPtr)) {
+                  const texIdx = materialToTexture.get(refMatPtr);
+                  materialToTexture.set(matPtr, texIdx);
+                  Logger.success(`    -> Resolved via ${refMat.Name} to Texture ${texIdx}`);
+                  break;
+                }
+              }
+            }
+          }
+        }
+
+        // Log final material->texture mapping
+        Logger.info(`--- Final Material->Texture Mapping ---`);
+        for (const [matPtr, matInfo] of materialsMap) {
+          const texIdx = materialToTexture.has(matPtr) ? materialToTexture.get(matPtr) : 'NONE';
+          Logger.info(`  ${matInfo.Name} -> Texture ${texIdx}`);
+        }
+      }
+
+      // Helper function to get texture index for a material
+      function getTextureForMaterial(matPtr) {
+        if (materialToTexture.has(matPtr)) {
+          return materialToTexture.get(matPtr);
+        }
+        return -1; // No texture found
+      }
+
+      for (let i = 0; i < fileInfo.ModelCount; i++) {
+        const model = fileInfo.Models[i];
+        Logger.mesh(`--- Model ${i}: ${model.Name || 'unnamed'} ---`);
+        Logger.mesh(`MeshBindingsCount: ${model.MeshBindingsCount}`);
+
+        for (let j = 0; j < model.MeshBindingsCount; j++) {
+          const meshPtr = model.MeshBindings[j]._ptr;
+
+          // Find mesh in fileInfo
+          let mesh = null;
+          for (let k = 0; k < fileInfo.Meshes.length; k++) {
+            if (fileInfo.Meshes[k]._ptr === meshPtr) {
+              mesh = fileInfo.Meshes[k];
+              break;
+            }
+          }
+
+          if (!mesh) {
+            Logger.warn(`Mesh not found for binding ${j}`);
+            continue;
+          }
+
+          Logger.mesh(`  Mesh ${j}: ${mesh.Name || 'unnamed'}`);
+          Logger.mesh(`    MaterialsBindingCount: ${mesh.MaterialsBindingCount}`);
+          Logger.mesh(`    BoneBindingsCount: ${mesh.BoneBindingsCount}`);
+
+          // Analyze Material Bindings for this mesh
+          let meshTextureIndex = -1; // -1 = not found
+          if (mesh.MaterialBindings && mesh.MaterialsBindingCount > 0) {
+            Logger.texture(`    --- Material Bindings ---`);
+            for (let mb = 0; mb < mesh.MaterialsBindingCount; mb++) {
+              const matBindPtr = gr2.runtime.get_dword_ptr(mesh.MaterialBindings + 4 * mb);
+              Logger.texture(`      Binding ${mb}: Material ptr 0x${matBindPtr.toString(16)}`);
+
+              // Use resolved material->texture mapping
+              const texIdx = getTextureForMaterial(matBindPtr);
+              if (texIdx >= 0) {
+                const mat = materialsMap.get(matBindPtr);
+                Logger.success(`        Material: ${mat ? mat.Name : 'unknown'} -> Texture ${texIdx}`);
+                if (meshTextureIndex < 0) {
+                  meshTextureIndex = texIdx;
+                }
+              } else if (materialsMap.has(matBindPtr)) {
+                const mat = materialsMap.get(matBindPtr);
+                Logger.warn(`        Material: ${mat.Name} -> NO TEXTURE FOUND`);
+              }
+            }
+          }
+
+          // Fallback to texture 0 if nothing found
+          if (meshTextureIndex < 0 && textureData.textures.length > 0) {
+            Logger.warn(`    No texture resolved, falling back to texture 0`);
+            meshTextureIndex = 0;
+          }
+
+          // Get vertices
+          const vertexCount = gr2.GetMeshVertexCount(mesh._ptr);
+          const vertices = gr2.CopyMeshVertices(mesh._ptr);
+          const indices = gr2.CopyMeshIndices(mesh._ptr);
+          const indexCount = gr2.GetMeshIndexCount(mesh._ptr);
+
+          Logger.mesh(`    VertexCount: ${vertexCount}`);
+          Logger.mesh(`    IndexCount: ${indexCount}`);
+          Logger.mesh(`    Vertices buffer size: ${vertices.length} bytes`);
+          Logger.mesh(`    Indices buffer size: ${indices.length} bytes`);
+
+          // Analyze UV coordinates
+          const floats = new Float32Array(vertices.buffer);
+          let minU = Infinity, maxU = -Infinity, minV = Infinity, maxV = -Infinity;
+
+          Logger.uv(`    --- UV Analysis for Mesh ${j} ---`);
+
+          for (let v = 0; v < vertexCount; v++) {
+            const offset = v * 8; // PNT332: 8 floats per vertex
+            const u = floats[offset + 6];
+            const vCoord = floats[offset + 7];
+
+            minU = Math.min(minU, u);
+            maxU = Math.max(maxU, u);
+            minV = Math.min(minV, vCoord);
+            maxV = Math.max(maxV, vCoord);
+
+            // Log first few UVs
+            if (v < 5) {
+              Logger.uv(`      Vertex ${v}: UV(${u.toFixed(4)}, ${vCoord.toFixed(4)})`);
+            }
+          }
+
+          Logger.uv(`    UV U range: [${minU.toFixed(4)}, ${maxU.toFixed(4)}]`);
+          Logger.uv(`    UV V range: [${minV.toFixed(4)}, ${maxV.toFixed(4)}]`);
+
+          // Check for UV issues
+          if (minU < 0 || maxU > 1 || minV < 0 || maxV > 1) {
+            Logger.warn(`    WARNING: UV coordinates outside [0,1] range!`);
+          }
+
+          textureData.uvRanges.push({
+            meshIndex: j,
+            meshName: mesh.Name,
+            minU, maxU, minV, maxV
+          });
+
+          // Analyze indices
+          const indicesArray = new Uint16Array(indices.buffer);
+          Logger.mesh(`    Indices sample: [${Array.from(indicesArray.slice(0, 12)).join(', ')}...]`);
+
+          // Check index validity
+          let maxIndex = 0;
+          for (let idx = 0; idx < indicesArray.length; idx++) {
+            maxIndex = Math.max(maxIndex, indicesArray[idx]);
+          }
+          Logger.mesh(`    Max index value: ${maxIndex} (should be < ${vertexCount})`);
+
+          if (maxIndex >= vertexCount) {
+            Logger.error(`    ERROR: Index out of bounds!`);
+          }
+
+          meshData.push({
+            name: mesh.Name || `Mesh_${j}`,
+            vertices: new Uint8Array(vertices),
+            indices: new Uint16Array(indices.buffer),
+            vertexCount,
+            indexCount,
+            materialBindingCount: mesh.MaterialsBindingCount,
+            uvRange: { minU, maxU, minV, maxV },
+            textureIndex: meshTextureIndex // Correct texture index from material binding
+          });
+
+          textureData.meshes.push({
+            index: j,
+            name: mesh.Name,
+            vertexCount,
+            indexCount,
+            materialBindingCount: mesh.MaterialsBindingCount
+          });
+        }
+      }
+
+      return meshData;
+    }
+
+    function renderModel(meshData, textures) {
+      Logger.info('='.repeat(50));
+      Logger.info('RENDERING');
+      Logger.info('='.repeat(50));
+
+      // Clear previous model
+      if (currentModel) {
+        scene.remove(currentModel);
+      }
+
+      currentModel = new THREE.Group();
+
+      meshData.forEach((meshInfo, index) => {
+        Logger.info(`Rendering mesh ${index}: ${meshInfo.name}`);
+
+        const geometry = new THREE.BufferGeometry();
+        const floats = new Float32Array(meshInfo.vertices.buffer);
+
+        const positions = [];
+        const normals = [];
+        const uvs = [];
+
+        for (let i = 0; i < meshInfo.vertexCount; i++) {
+          const offset = i * 8;
+
+          // Position (X, Y, Z)
+          positions.push(floats[offset], floats[offset + 1], floats[offset + 2]);
+
+          // Normal (NX, NY, NZ)
+          normals.push(floats[offset + 3], floats[offset + 4], floats[offset + 5]);
+
+          // UV (U, 1-V) - flip V coordinate
+          uvs.push(floats[offset + 6], 1.0 - floats[offset + 7]);
+        }
+
+        geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+        geometry.setAttribute('normal', new THREE.Float32BufferAttribute(normals, 3));
+        geometry.setAttribute('uv', new THREE.Float32BufferAttribute(uvs, 2));
+        geometry.setIndex(new THREE.BufferAttribute(meshInfo.indices, 1));
+        geometry.computeBoundingSphere();
+
+        // Create material with correct texture from material binding
+        let material;
+        if (textures.length > 0) {
+          // Use texture index from material binding analysis
+          let textureIndex = 0;
+          if (meshInfo.textureIndex !== undefined && meshInfo.textureIndex >= 0) {
+            textureIndex = Math.min(meshInfo.textureIndex, textures.length - 1);
+            Logger.info(`  Using texture ${textureIndex} for mesh ${index} (resolved from material binding)`);
+          } else {
+            textureIndex = Math.min(index, textures.length - 1);
+            Logger.warn(`  FALLBACK: Using texture ${textureIndex} for mesh ${index} (no material binding found)`);
+          }
+
+          material = new THREE.MeshLambertMaterial({
+            map: textures[textureIndex].threeTexture,
+            side: THREE.DoubleSide,
+            wireframe: isWireframe,
+            transparent: textures[textureIndex].hasAlpha,
+            alphaTest: textures[textureIndex].hasAlpha ? 0.1 : 0
+          });
+        } else {
+          material = new THREE.MeshLambertMaterial({
+            color: 0xcccccc,
+            side: THREE.DoubleSide,
+            wireframe: isWireframe
+          });
+        }
+
+        const mesh = new THREE.Mesh(geometry, material);
+        mesh.name = meshInfo.name;
+        currentModel.add(mesh);
+      });
+
+      // Apply coordinate system transformation (GR2 -> Three.js)
+      const matrix = new THREE.Matrix4().set(
+        1, 0, 0, 0,
+        0, 0, 1, 0,
+        0, 1, 0, 0,
+        0, 0, 0, 1
+      );
+      currentModel.applyMatrix4(matrix);
+
+      scene.add(currentModel);
+      requestRender();
+
+      Logger.success(`Model rendered with ${meshData.length} meshes`);
+    }
+
+    function updateTextureAnalysis() {
+      const container = document.getElementById('texture-analysis');
+
+      let html = '<table>';
+      html += '<tr><th>#</th><th>Name</th><th>Size</th><th>Alpha</th><th>Format</th></tr>';
+
+      textureData.textures.forEach((tex, i) => {
+        html += `<tr>
+          <td>${i}</td>
+          <td>${tex.info.FromFileName || 'N/A'}</td>
+          <td>${tex.info.Width}x${tex.info.Height}</td>
+          <td>${tex.hasAlpha ? 'Yes' : 'No'}</td>
+          <td>Enc:${tex.info.Encoding} Sub:${tex.info.SubFormat}</td>
+        </tr>`;
+      });
+
+      html += '</table>';
+
+      if (textureData.uvRanges.length > 0) {
+        html += '<h3 style="margin-top:10px;color:#4ea;">UV Ranges</h3>';
+        html += '<table>';
+        html += '<tr><th>Mesh</th><th>U</th><th>V</th></tr>';
+
+        textureData.uvRanges.forEach(uv => {
+          const uWarning = (uv.minU < 0 || uv.maxU > 1) ? ' style="color:#e44"' : '';
+          const vWarning = (uv.minV < 0 || uv.maxV > 1) ? ' style="color:#e44"' : '';
+          html += `<tr>
+            <td>${uv.meshName || 'Mesh'}</td>
+            <td${uWarning}>[${uv.minU.toFixed(2)}, ${uv.maxU.toFixed(2)}]</td>
+            <td${vWarning}>[${uv.minV.toFixed(2)}, ${uv.maxV.toFixed(2)}]</td>
+          </tr>`;
+        });
+
+        html += '</table>';
+      }
+
+      container.innerHTML = html;
+    }
+
+    function toggleRotation() {
+      isRotating = !isRotating;
+      document.getElementById('btnRotate').textContent = 'Rotation: ' + (isRotating ? 'ON' : 'OFF');
+      document.getElementById('btnRotate').classList.toggle('active', isRotating);
+      requestRender();
+    }
+
+    function toggleWireframe() {
+      isWireframe = !isWireframe;
+      document.getElementById('btnWireframe').textContent = 'Wireframe: ' + (isWireframe ? 'ON' : 'OFF');
+      document.getElementById('btnWireframe').classList.toggle('active', isWireframe);
+
+      if (currentModel) {
+        currentModel.traverse((object) => {
+          if (object.material) {
+            object.material.wireframe = isWireframe;
+          }
+        });
+      }
+      requestRender();
+    }
+
+    // Render loop (on-demand + FPS cap when rotating)
+    let rafHandle = null;
+    let lastFrameTime = 0;
+    const TARGET_FPS = 30;
+
+    function requestRender() {
+      if (rafHandle !== null) return;
+      rafHandle = requestAnimationFrame(renderLoop);
+    }
+
+    function renderLoop(time) {
+      rafHandle = null;
+
+      if (isRotating && currentModel) {
+        const frameInterval = 1000 / TARGET_FPS;
+        if (!lastFrameTime) lastFrameTime = time;
+        const dt = time - lastFrameTime;
+
+        if (dt >= frameInterval) {
+          // keep roughly same speed as before, but capped FPS
+          currentModel.rotation.y += 0.01 * (dt / frameInterval);
+          lastFrameTime = time;
+          renderer.render(scene, camera);
+        }
+
+        // continue looping while rotating
+        requestRender();
+        return;
+      }
+
+      lastFrameTime = 0;
+      renderer.render(scene, camera);
+    }
+
+
+    function onWindowResize() {
+      const container = document.getElementById('render-container');
+      camera.aspect = container.clientWidth / container.clientHeight;
+      camera.updateProjectionMatrix();
+      renderer.setSize(container.clientWidth, container.clientHeight);
+      requestRender();
+    }
+
+    // Initialize
+    init();
+  </script>
+</body>
+</html>
