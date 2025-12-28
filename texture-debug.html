@@ -138,18 +138,97 @@
   <script src="pe_env.js"></script>
 
   <script>
-    // Debug logging system
+    // Performance utilities
+    function throttle(func, limit) {
+      let inThrottle;
+      return function(...args) {
+        if (!inThrottle) {
+          func.apply(this, args);
+          inThrottle = true;
+          setTimeout(() => inThrottle = false, limit);
+        }
+      };
+    }
+
+    function debounce(func, wait) {
+      let timeout;
+      return function(...args) {
+        clearTimeout(timeout);
+        timeout = setTimeout(() => func.apply(this, args), wait);
+      };
+    }
+
+    // Cached DOM references
+    const DOM = {
+      log: null,
+      renderContainer: null,
+      texturePreview: null,
+      textureAnalysis: null,
+      btnRotate: null,
+      btnWireframe: null,
+      init() {
+        this.log = document.getElementById('log');
+        this.renderContainer = document.getElementById('render-container');
+        this.texturePreview = document.getElementById('texture-preview');
+        this.textureAnalysis = document.getElementById('texture-analysis');
+        this.btnRotate = document.getElementById('btnRotate');
+        this.btnWireframe = document.getElementById('btnWireframe');
+      }
+    };
+
+    // Debug logging system with batched updates
     const Logger = {
+      buffer: [],
+      maxBufferSize: 50,
+      maxLogEntries: 200,
+      flushScheduled: false,
+
       log: function(msg, type = 'info') {
-        const logEl = document.getElementById('log');
-        const time = new Date().toLocaleTimeString();
-        const div = document.createElement('div');
-        div.className = 'log-' + type;
-        div.innerHTML = `[${time}] ${msg}`;
-        logEl.appendChild(div);
-        logEl.scrollTop = logEl.scrollHeight;
+        this.buffer.push({ msg, type, time: new Date().toLocaleTimeString() });
         console.log(`[${type.toUpperCase()}]`, msg);
+
+        if (!this.flushScheduled) {
+          this.flushScheduled = true;
+          requestAnimationFrame(() => this.flush());
+        }
       },
+
+      flush: function() {
+        if (this.buffer.length === 0) {
+          this.flushScheduled = false;
+          return;
+        }
+
+        const logEl = DOM.log;
+        if (!logEl) {
+          this.flushScheduled = false;
+          return;
+        }
+
+        // Use DocumentFragment for batched DOM updates
+        const fragment = document.createDocumentFragment();
+        this.buffer.forEach(({ msg, type, time }) => {
+          const div = document.createElement('div');
+          div.className = 'log-' + type;
+          div.textContent = `[${time}] ${msg}`;
+          fragment.appendChild(div);
+        });
+
+        logEl.appendChild(fragment);
+        this.buffer = [];
+        this.flushScheduled = false;
+
+        // Limit total log entries to prevent memory issues
+        while (logEl.children.length > this.maxLogEntries) {
+          logEl.removeChild(logEl.firstChild);
+        }
+
+        // Defer scroll to avoid layout thrashing
+        requestAnimationFrame(() => {
+          logEl.scrollTop = logEl.scrollHeight;
+        });
+      },
+
       info: function(msg) { this.log(msg, 'info'); },
       warn: function(msg) { this.log(msg, 'warn'); },
       error: function(msg) { this.log(msg, 'error'); },
@@ -166,6 +245,9 @@
     let isWireframe = false;
     let granny2Binary = null;
     let gr2Instance = null;
+    let needsRender = true; // Flag for render-on-demand
+    let lastRenderTime = 0;
+    const MIN_RENDER_INTERVAL = 16; // ~60fps max
 
     // Texture analysis data
     let textureData = {
@@ -176,16 +258,20 @@
     };
 
     function clearLog() {
-      document.getElementById('log').innerHTML = '';
+      if (DOM.log) DOM.log.innerHTML = '';
+      Logger.buffer = [];
     }
 
     function init() {
+      // Initialize cached DOM references
+      DOM.init();
+
       Logger.info('Initializing Three.js scene...');
 
       scene = new THREE.Scene();
       scene.background = new THREE.Color(0x1a1a2e);
 
-      const container = document.getElementById('render-container');
+      const container = DOM.renderContainer;
       camera = new THREE.PerspectiveCamera(45, container.clientWidth / container.clientHeight, 1, 10000);
       camera.position.set(25, 35, 25);
       camera.lookAt(new THREE.Vector3(0, 10, 0));
@@ -207,7 +293,8 @@
       // Mouse controls
       setupControls();
 
-      window.addEventListener('resize', onWindowResize);
+      // Debounced resize handler
+      window.addEventListener('resize', debounce(onWindowResize, 100));
 
       animate();
       loadGranny2Binary();
@@ -215,21 +302,34 @@
 
     function setupControls() {
       let isDragging = false;
-      let previousMouse = { x: 0, y: 0 };
+      let previousMouseX = 0;
+      let previousMouseY = 0;
 
       renderer.domElement.addEventListener('mousedown', () => isDragging = true);
       renderer.domElement.addEventListener('mouseup', () => isDragging = false);
-      renderer.domElement.addEventListener('mousemove', (e) => {
+      renderer.domElement.addEventListener('mouseleave', () => isDragging = false);
+
+      // Throttled mousemove - update at most every 16ms (~60fps)
+      const handleMouseMove = throttle((e) => {
         if (isDragging && currentModel) {
-          currentModel.rotation.y += (e.offsetX - previousMouse.x) * 0.01;
-          currentModel.rotation.x += (e.offsetY - previousMouse.y) * 0.01;
+          currentModel.rotation.y += (e.offsetX - previousMouseX) * 0.01;
+          currentModel.rotation.x += (e.offsetY - previousMouseY) * 0.01;
+          needsRender = true;
         }
-        previousMouse = { x: e.offsetX, y: e.offsetY };
-      });
-      renderer.domElement.addEventListener('wheel', (e) => {
+        previousMouseX = e.offsetX;
+        previousMouseY = e.offsetY;
+      }, 16);
+
+      renderer.domElement.addEventListener('mousemove', handleMouseMove);
+
+      // Throttled wheel zoom
+      const handleWheel = throttle((e) => {
         e.preventDefault();
         camera.position.z += e.deltaY * 0.1;
-      });
+        needsRender = true;
+      }, 16);
+
+      renderer.domElement.addEventListener('wheel', handleWheel, { passive: false });
     }
 
     async function loadGranny2Binary() {
@@ -308,7 +408,7 @@
       Logger.texture('TEXTURE ANALYSIS');
       Logger.texture('='.repeat(50));
 
-      const previewContainer = document.getElementById('texture-preview');
+      const previewContainer = DOM.texturePreview;
       previewContainer.innerHTML = '';
 
       for (let i = 0; i < fileInfo.TextureCount; i++) {
@@ -338,17 +438,28 @@
         Logger.texture(`Pixel data size: ${pixelData.length} bytes`);
         Logger.texture(`Expected size: ${textureInfo.Width * textureInfo.Height * 4} bytes`);
 
-        // Analyze pixel data
+        // Analyze pixel data with sampling for large textures
         let minR = 255, maxR = 0, minG = 255, maxG = 0, minB = 255, maxB = 0, minA = 255, maxA = 0;
         let transparentPixels = 0;
 
-        for (let p = 0; p < pixelData.length; p += 4) {
+        const totalPixels = pixelData.length / 4;
+        const MAX_SAMPLES = 10000; // Sample up to 10k pixels for stats
+        const stride = totalPixels > MAX_SAMPLES ? Math.floor(totalPixels / MAX_SAMPLES) * 4 : 4;
+        let sampledCount = 0;
+
+        for (let p = 0; p < pixelData.length; p += stride) {
           const r = pixelData[p], g = pixelData[p + 1], b = pixelData[p + 2], a = pixelData[p + 3];
-          minR = Math.min(minR, r); maxR = Math.max(maxR, r);
-          minG = Math.min(minG, g); maxG = Math.max(maxG, g);
-          minB = Math.min(minB, b); maxB = Math.max(maxB, b);
-          minA = Math.min(minA, a); maxA = Math.max(maxA, a);
+          if (r < minR) minR = r; if (r > maxR) maxR = r;
+          if (g < minG) minG = g; if (g > maxG) maxG = g;
+          if (b < minB) minB = b; if (b > maxB) maxB = b;
+          if (a < minA) minA = a; if (a > maxA) maxA = a;
           if (a < 255) transparentPixels++;
+          sampledCount++;
+        }
+
+        // Estimate transparent pixels for full image
+        if (stride > 4) {
+          transparentPixels = Math.round(transparentPixels * (totalPixels / sampledCount));
         }
 
         Logger.texture(`R range: [${minR}, ${maxR}]`);
@@ -480,6 +591,12 @@
         return -1; // No texture found
       }
 
+      // Build mesh lookup map for O(1) access instead of O(n) linear search
+      const meshLookup = new Map();
+      for (let k = 0; k < fileInfo.Meshes.length; k++) {
+        meshLookup.set(fileInfo.Meshes[k]._ptr, fileInfo.Meshes[k]);
+      }
+
       for (let i = 0; i < fileInfo.ModelCount; i++) {
         const model = fileInfo.Models[i];
         Logger.mesh(`--- Model ${i}: ${model.Name || 'unnamed'} ---`);
@@ -488,14 +605,8 @@
         for (let j = 0; j < model.MeshBindingsCount; j++) {
           const meshPtr = model.MeshBindings[j]._ptr;
 
-          // Find mesh in fileInfo
-          let mesh = null;
-          for (let k = 0; k < fileInfo.Meshes.length; k++) {
-            if (fileInfo.Meshes[k]._ptr === meshPtr) {
-              mesh = fileInfo.Meshes[k];
-              break;
-            }
-          }
+          // Find mesh using O(1) lookup instead of O(n) linear search
+          const mesh = meshLookup.get(meshPtr);
 
           if (!mesh) {
             Logger.warn(`Mesh not found for binding ${j}`);
@@ -546,26 +657,29 @@
           Logger.mesh(`    Vertices buffer size: ${vertices.length} bytes`);
           Logger.mesh(`    Indices buffer size: ${indices.length} bytes`);
 
-          // Analyze UV coordinates
+          // Analyze UV coordinates - optimized with direct comparisons
           const floats = new Float32Array(vertices.buffer);
           let minU = Infinity, maxU = -Infinity, minV = Infinity, maxV = -Infinity;
 
           Logger.uv(`    --- UV Analysis for Mesh ${j} ---`);
 
+          // Sample first 5 UVs for logging
+          const logLimit = Math.min(5, vertexCount);
+          for (let v = 0; v < logLimit; v++) {
+            const offset = v * 8;
+            Logger.uv(`      Vertex ${v}: UV(${floats[offset + 6].toFixed(4)}, ${floats[offset + 7].toFixed(4)})`);
+          }
+
+          // Fast UV range calculation with direct comparisons
           for (let v = 0; v < vertexCount; v++) {
-            const offset = v * 8; // PNT332: 8 floats per vertex
+            const offset = v * 8;
             const u = floats[offset + 6];
             const vCoord = floats[offset + 7];
 
-            minU = Math.min(minU, u);
-            maxU = Math.max(maxU, u);
-            minV = Math.min(minV, vCoord);
-            maxV = Math.max(maxV, vCoord);
-
-            // Log first few UVs
-            if (v < 5) {
-              Logger.uv(`      Vertex ${v}: UV(${u.toFixed(4)}, ${vCoord.toFixed(4)})`);
-            }
+            if (u < minU) minU = u;
+            if (u > maxU) maxU = u;
+            if (vCoord < minV) minV = vCoord;
+            if (vCoord > maxV) maxV = vCoord;
           }
 
           Logger.uv(`    UV U range: [${minU.toFixed(4)}, ${maxU.toFixed(4)}]`);
@@ -586,10 +700,11 @@
           const indicesArray = new Uint16Array(indices.buffer);
           Logger.mesh(`    Indices sample: [${Array.from(indicesArray.slice(0, 12)).join(', ')}...]`);
 
-          // Check index validity
+          // Check index validity - optimized with direct comparison
           let maxIndex = 0;
-          for (let idx = 0; idx < indicesArray.length; idx++) {
-            maxIndex = Math.max(maxIndex, indicesArray[idx]);
+          for (let idx = 0, len = indicesArray.length; idx < len; idx++) {
+            const val = indicesArray[idx];
+            if (val > maxIndex) maxIndex = val;
           }
           Logger.mesh(`    Max index value: ${maxIndex} (should be < ${vertexCount})`);
 
@@ -621,13 +736,36 @@
       return meshData;
     }
 
+    // Cleanup Three.js resources to prevent memory leaks
+    function disposeObject(obj) {
+      if (!obj) return;
+
+      obj.traverse((child) => {
+        if (child.geometry) {
+          child.geometry.dispose();
+        }
+        if (child.material) {
+          if (Array.isArray(child.material)) {
+            child.material.forEach(mat => {
+              if (mat.map) mat.map.dispose();
+              mat.dispose();
+            });
+          } else {
+            if (child.material.map) child.material.map.dispose();
+            child.material.dispose();
+          }
+        }
+      });
+    }
+
     function renderModel(meshData, textures) {
       Logger.info('='.repeat(50));
       Logger.info('RENDERING');
       Logger.info('='.repeat(50));
 
-      // Clear previous model
+      // Clear previous model and dispose resources
       if (currentModel) {
+        disposeObject(currentModel);
         scene.remove(currentModel);
       }
 
@@ -638,27 +776,36 @@
 
         const geometry = new THREE.BufferGeometry();
         const floats = new Float32Array(meshInfo.vertices.buffer);
+        const vertexCount = meshInfo.vertexCount;
 
-        const positions = [];
-        const normals = [];
-        const uvs = [];
+        // Pre-allocate typed arrays instead of using push()
+        const positions = new Float32Array(vertexCount * 3);
+        const normals = new Float32Array(vertexCount * 3);
+        const uvs = new Float32Array(vertexCount * 2);
 
-        for (let i = 0; i < meshInfo.vertexCount; i++) {
-          const offset = i * 8;
+        for (let i = 0; i < vertexCount; i++) {
+          const srcOffset = i * 8;
+          const posOffset = i * 3;
+          const uvOffset = i * 2;
 
           // Position (X, Y, Z)
-          positions.push(floats[offset], floats[offset + 1], floats[offset + 2]);
+          positions[posOffset] = floats[srcOffset];
+          positions[posOffset + 1] = floats[srcOffset + 1];
+          positions[posOffset + 2] = floats[srcOffset + 2];
 
           // Normal (NX, NY, NZ)
-          normals.push(floats[offset + 3], floats[offset + 4], floats[offset + 5]);
+          normals[posOffset] = floats[srcOffset + 3];
+          normals[posOffset + 1] = floats[srcOffset + 4];
+          normals[posOffset + 2] = floats[srcOffset + 5];
 
           // UV (U, 1-V) - flip V coordinate
-          uvs.push(floats[offset + 6], 1.0 - floats[offset + 7]);
+          uvs[uvOffset] = floats[srcOffset + 6];
+          uvs[uvOffset + 1] = 1.0 - floats[srcOffset + 7];
         }
 
-        geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
-        geometry.setAttribute('normal', new THREE.Float32BufferAttribute(normals, 3));
-        geometry.setAttribute('uv', new THREE.Float32BufferAttribute(uvs, 2));
+        geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+        geometry.setAttribute('normal', new THREE.BufferAttribute(normals, 3));
+        geometry.setAttribute('uv', new THREE.BufferAttribute(uvs, 2));
         geometry.setIndex(new THREE.BufferAttribute(meshInfo.indices, 1));
         geometry.computeBoundingSphere();
 
@@ -705,12 +852,13 @@
       currentModel.applyMatrix4(matrix);
 
       scene.add(currentModel);
+      needsRender = true;
 
       Logger.success(`Model rendered with ${meshData.length} meshes`);
     }
 
     function updateTextureAnalysis() {
-      const container = document.getElementById('texture-analysis');
+      const container = DOM.textureAnalysis;
 
       let html = '<table>';
       html += '<tr><th>#</th><th>Name</th><th>Size</th><th>Alpha</th><th>Format</th></tr>';
@@ -750,14 +898,15 @@
 
     function toggleRotation() {
       isRotating = !isRotating;
-      document.getElementById('btnRotate').textContent = 'Rotation: ' + (isRotating ? 'ON' : 'OFF');
-      document.getElementById('btnRotate').classList.toggle('active', isRotating);
+      DOM.btnRotate.textContent = 'Rotation: ' + (isRotating ? 'ON' : 'OFF');
+      DOM.btnRotate.classList.toggle('active', isRotating);
+      needsRender = true;
     }
 
     function toggleWireframe() {
       isWireframe = !isWireframe;
-      document.getElementById('btnWireframe').textContent = 'Wireframe: ' + (isWireframe ? 'ON' : 'OFF');
-      document.getElementById('btnWireframe').classList.toggle('active', isWireframe);
+      DOM.btnWireframe.textContent = 'Wireframe: ' + (isWireframe ? 'ON' : 'OFF');
+      DOM.btnWireframe.classList.toggle('active', isWireframe);
 
       if (currentModel) {
         currentModel.traverse((object) => {
@@ -765,24 +914,40 @@
             object.material.wireframe = isWireframe;
           }
         });
+        needsRender = true;
       }
     }
 
-    function animate() {
+    function animate(timestamp) {
       requestAnimationFrame(animate);
 
-      if (currentModel && isRotating) {
-        currentModel.rotation.y += 0.01;
+      // Frame rate limiting
+      if (timestamp - lastRenderTime < MIN_RENDER_INTERVAL) {
+        return;
       }
 
-      renderer.render(scene, camera);
+      // Handle rotation animation
+      if (currentModel && isRotating) {
+        currentModel.rotation.y += 0.01;
+        needsRender = true;
+      }
+
+      // Only render when needed
+      if (needsRender) {
+        renderer.render(scene, camera);
+        needsRender = false;
+        lastRenderTime = timestamp;
+      }
     }
 
     function onWindowResize() {
-      const container = document.getElementById('render-container');
+      const container = DOM.renderContainer;
+      if (!container) return;
+
       camera.aspect = container.clientWidth / container.clientHeight;
       camera.updateProjectionMatrix();
       renderer.setSize(container.clientWidth, container.clientHeight);
+      needsRender = true;
     }
 
     // Initialize
