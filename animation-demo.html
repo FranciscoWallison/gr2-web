@@ -1,0 +1,446 @@
+<!DOCTYPE html>
+<html>
+<head>
+	<title>Granny2 Animation Demo</title>
+	<style>
+		body {
+			margin: 0;
+			padding: 20px;
+			font-family: Arial, sans-serif;
+			background: #1a1a2e;
+			color: #eee;
+		}
+		#render-container {
+			display: inline-block;
+			border: 2px solid #4a4a6a;
+			border-radius: 8px;
+			overflow: hidden;
+		}
+		#controls {
+			margin-top: 20px;
+			padding: 15px;
+			background: #2a2a4a;
+			border-radius: 8px;
+			display: inline-block;
+		}
+		button {
+			padding: 10px 20px;
+			margin: 5px;
+			border: none;
+			border-radius: 5px;
+			cursor: pointer;
+			font-size: 14px;
+			transition: all 0.2s;
+		}
+		button:hover {
+			transform: scale(1.05);
+		}
+		.btn-idle { background: #4CAF50; color: white; }
+		.btn-move { background: #2196F3; color: white; }
+		.btn-attack { background: #f44336; color: white; }
+		.btn-damage { background: #ff9800; color: white; }
+		.btn-dead { background: #9c27b0; color: white; }
+		#status {
+			margin-top: 15px;
+			padding: 10px;
+			background: #1a1a2e;
+			border-radius: 5px;
+			font-family: monospace;
+		}
+		#info {
+			margin-top: 20px;
+			padding: 15px;
+			background: #2a2a4a;
+			border-radius: 8px;
+		}
+		.info-row {
+			display: flex;
+			justify-content: space-between;
+			padding: 5px 0;
+			border-bottom: 1px solid #3a3a5a;
+		}
+		h1 {
+			color: #6a6aff;
+			margin-bottom: 20px;
+		}
+		h2 {
+			color: #8a8aff;
+			margin: 0 0 10px 0;
+		}
+		#animation-list {
+			margin-top: 15px;
+		}
+		.anim-item {
+			padding: 8px 12px;
+			margin: 3px 0;
+			background: #3a3a5a;
+			border-radius: 4px;
+			cursor: pointer;
+			display: flex;
+			justify-content: space-between;
+		}
+		.anim-item:hover {
+			background: #4a4a6a;
+		}
+		.anim-item.active {
+			background: #5a5a8a;
+			border-left: 3px solid #6a6aff;
+		}
+		#loading {
+			position: fixed;
+			top: 50%;
+			left: 50%;
+			transform: translate(-50%, -50%);
+			font-size: 24px;
+			color: #6a6aff;
+		}
+		#speed-control {
+			margin-top: 10px;
+		}
+		input[type="range"] {
+			width: 200px;
+		}
+	</style>
+</head>
+<body>
+	<div id="loading">Loading Granny2...</div>
+
+	<div id="main-content" style="display: none;">
+		<h1>Granny2 Animation System Demo</h1>
+
+		<div id="render-container"></div>
+
+		<div id="controls">
+			<h2>Animation Controls</h2>
+			<button class="btn-idle" onclick="character.stop()">IDLE (Stop)</button>
+			<button class="btn-move" onclick="character.move({x:0, z:1}, 1.0)">MOVE</button>
+			<button class="btn-attack" onclick="character.attack()">ATTACK</button>
+			<button class="btn-damage" onclick="character.takeDamage(10)">DAMAGE</button>
+			<button class="btn-dead" onclick="character.die()">DEAD</button>
+
+			<div id="speed-control">
+				<label>Speed: <span id="speed-value">1.0</span></label>
+				<input type="range" min="0.1" max="3" step="0.1" value="1"
+					   onchange="setSpeed(this.value)">
+			</div>
+
+			<div id="status">
+				<div>State: <span id="current-state">-</span></div>
+				<div>Animation: <span id="anim-time">0.00</span>s / <span id="anim-duration">0.00</span>s</div>
+				<div>Progress: <span id="anim-progress">0</span>%</div>
+				<div>FPS: <span id="fps">0</span></div>
+			</div>
+		</div>
+
+		<div id="info">
+			<h2>Model Info</h2>
+			<div class="info-row">
+				<span>Model Count:</span>
+				<span id="model-count">-</span>
+			</div>
+			<div class="info-row">
+				<span>Mesh Count:</span>
+				<span id="mesh-count">-</span>
+			</div>
+			<div class="info-row">
+				<span>Bone Count:</span>
+				<span id="bone-count">-</span>
+			</div>
+			<div class="info-row">
+				<span>Animation Count:</span>
+				<span id="anim-count">-</span>
+			</div>
+
+			<h2 style="margin-top: 15px;">Available Animations</h2>
+			<div id="animation-list"></div>
+		</div>
+	</div>
+
+	<script>
+		function dbg_assert(cond) {
+			if(!cond) console.log("Assertion failure");
+		}
+		function dbg_log(s) { console.log(s); }
+	</script>
+
+	<script src="three.min.js"></script>
+	<script src="const.js"></script>
+	<script src="main.js"></script>
+	<script src="memory.js"></script>
+	<script src="io.js"></script>
+	<script src="v86.js"></script>
+	<script src="fpu.js"></script>
+	<script src="granny2.js"></script>
+	<script src="granny2.subs.js"></script>
+	<script src="granny2.def.js"></script>
+	<script src="pe_env.js"></script>
+	<script src="animation-controller.js"></script>
+
+	<script>
+		var gr2, character, scene, camera, renderer;
+		var mesh3d, geometry, material;
+		var lastTime = performance.now();
+		var frameCount = 0;
+		var lastFpsUpdate = 0;
+
+		// State names for display
+		var stateNames = ['IDLE', 'MOVE', 'ATTACK', 'DAMAGE', 'DEAD'];
+
+		function setSpeed(value) {
+			document.getElementById('speed-value').textContent = value;
+			if (character && character.animController) {
+				character.animController.setSpeed(parseFloat(value));
+			}
+		}
+
+		function updateStatus() {
+			if (!character || !character.animController) return;
+
+			var ctrl = character.animController;
+			document.getElementById('current-state').textContent = stateNames[ctrl.getState()];
+			document.getElementById('anim-time').textContent = ctrl.getAnimationTime().toFixed(2);
+			document.getElementById('anim-duration').textContent = ctrl.getAnimationDuration().toFixed(2);
+			document.getElementById('anim-progress').textContent = Math.round(ctrl.getAnimationProgress() * 100);
+		}
+
+		function updateFps() {
+			var now = performance.now();
+			frameCount++;
+
+			if (now - lastFpsUpdate > 1000) {
+				document.getElementById('fps').textContent = frameCount;
+				frameCount = 0;
+				lastFpsUpdate = now;
+			}
+		}
+
+		function createScene(vertices, indices, textures) {
+			// Parse vertices (PNT332 format: 3 pos + 3 normal + 2 uv)
+			var PNT332 = new Float32Array(vertices[0].buffer);
+			var vertexCount = PNT332.length / 8;
+
+			geometry = new THREE.Geometry();
+			var vertexNormals = [];
+			var uvs = [];
+
+			for (var i = 0; i < vertexCount; i++) {
+				var vx = PNT332[i * 8 + 0];
+				var vy = PNT332[i * 8 + 1];
+				var vz = PNT332[i * 8 + 2];
+				var nx = PNT332[i * 8 + 3];
+				var ny = PNT332[i * 8 + 4];
+				var nz = PNT332[i * 8 + 5];
+				var tx = PNT332[i * 8 + 6];
+				var ty = PNT332[i * 8 + 7];
+
+				geometry.vertices.push(new THREE.Vector3(vx, vy, vz));
+				vertexNormals.push(new THREE.Vector3(nx, ny, nz));
+				uvs.push(new THREE.Vector2(tx, 1.0 - ty));
+			}
+
+			// Process indices
+			var meshIndices = new Uint16Array(indices[0].buffer);
+			var triangleCount = meshIndices.length / 3;
+
+			for (var i = 0; i < triangleCount; i++) {
+				var a = meshIndices[i * 3 + 0];
+				var b = meshIndices[i * 3 + 1];
+				var c = meshIndices[i * 3 + 2];
+
+				if (a >= geometry.vertices.length || b >= geometry.vertices.length || c >= geometry.vertices.length) {
+					continue;
+				}
+
+				var face = new THREE.Face3(a, b, c);
+				if (vertexNormals[a] && vertexNormals[b] && vertexNormals[c]) {
+					face.vertexNormals[0] = vertexNormals[a];
+					face.vertexNormals[1] = vertexNormals[b];
+					face.vertexNormals[2] = vertexNormals[c];
+				}
+
+				geometry.faces.push(face);
+				if (uvs[a] && uvs[b] && uvs[c]) {
+					geometry.faceVertexUvs[0].push([uvs[a], uvs[b], uvs[c]]);
+				}
+			}
+
+			geometry.computeFaceNormals();
+			geometry.computeVertexNormals();
+
+			// Coordinate system conversion
+			geometry.applyMatrix(new THREE.Matrix4().set(
+				1, 0, 0, 0,
+				0, 0, 1, 0,
+				0, 1, 0, 0,
+				0, 0, 0, 1
+			));
+
+			// Create texture
+			var texture = new THREE.Texture(textures[0]);
+			texture.needsUpdate = true;
+
+			material = new THREE.MeshLambertMaterial({
+				color: 0xffffff,
+				map: texture,
+				side: THREE.BackSide
+			});
+
+			mesh3d = new THREE.Mesh(geometry, material);
+
+			// Scene setup
+			scene = new THREE.Scene();
+			scene.add(new THREE.AmbientLight(0x404040));
+
+			var light = new THREE.DirectionalLight(0xffffff, 0.5);
+			light.position.set(0, 20, -50);
+			scene.add(light);
+
+			scene.add(new THREE.AxisHelper(100));
+			scene.add(mesh3d);
+
+			// Camera
+			camera = new THREE.PerspectiveCamera(45, 800 / 600, 1, 10000);
+			camera.position.set(25, 35, 25);
+			camera.lookAt(new THREE.Vector3(0, 10, 0));
+
+			// Renderer
+			renderer = new THREE.WebGLRenderer({ antialias: true });
+			renderer.setSize(800, 600);
+			renderer.setClearColor(0x1a1a2e);
+			document.getElementById('render-container').appendChild(renderer.domElement);
+		}
+
+		function animate() {
+			requestAnimationFrame(animate);
+
+			var now = performance.now();
+			var deltaTime = (now - lastTime) / 1000;
+			lastTime = now;
+
+			// Update character animation
+			if (character && character.isLoaded) {
+				character.update(deltaTime);
+			}
+
+			// Rotate model
+			if (mesh3d) {
+				mesh3d.rotation.y += 0.005;
+			}
+
+			updateStatus();
+			updateFps();
+
+			renderer.render(scene, camera);
+		}
+
+		function loadModel(bin_granny2, bin_gr2_object) {
+			gr2 = new Granny2(bin_granny2);
+
+			console.log("Granny version match:", gr2.VersionMatch(2, 1, 0, 5));
+
+			// Create character entity
+			character = new CharacterEntity(gr2);
+			character.load(bin_gr2_object);
+
+			// Update UI
+			document.getElementById('model-count').textContent = character.fileInfo.ModelCount;
+			document.getElementById('mesh-count').textContent = character.fileInfo.MeshCount;
+			document.getElementById('bone-count').textContent = character.fileInfo.Skeletons[0].BoneCount;
+			document.getElementById('anim-count').textContent = character.fileInfo.AnimationCount;
+
+			// List animations
+			var animList = document.getElementById('animation-list');
+			var animations = gr2.GetAnimations(character.fileInfoPtr);
+
+			animations.forEach(function(anim, index) {
+				var div = document.createElement('div');
+				div.className = 'anim-item';
+				div.innerHTML = '<span>' + anim.name + '</span><span>' + anim.duration.toFixed(2) + 's</span>';
+				div.onclick = function() {
+					// Direct animation play
+					var ctrl = character.animController;
+					if (ctrl.animationControl) {
+						gr2.FreeControl(ctrl.animationControl);
+					}
+					ctrl.animationControl = gr2.PlayControlledAnimation(0, anim.ptr, ctrl.modelInstance);
+					gr2.SetControlLoopCount(ctrl.animationControl, 0);
+
+					// Update active state
+					document.querySelectorAll('.anim-item').forEach(function(el) {
+						el.classList.remove('active');
+					});
+					div.classList.add('active');
+				};
+				animList.appendChild(div);
+			});
+
+			// Extract mesh data for rendering
+			var vertices = [];
+			var indices = [];
+
+			for (var i = 0; i < character.meshes.length; i++) {
+				vertices.push(character.meshes[i].vertices);
+				indices.push(character.meshes[i].indices);
+			}
+
+			// Extract textures
+			var textures = [];
+			var textureCount = character.fileInfo.TextureCount;
+			var texturePtrs = character.fileInfo.Textures;
+
+			for (var i = 0; i < textureCount; i++) {
+				var texture_va = gr2.runtime.get_dword_ptr(texturePtrs + 4 * i);
+				var textureStruct = Granny2.readStructure(gr2.runtime.cpu, texture_va, Granny2.structs.granny_texture);
+				var texture_data = gr2.CopyTextureImage(texture_va);
+
+				var canvas = document.createElement('canvas');
+				canvas.width = textureStruct.Width;
+				canvas.height = textureStruct.Height;
+
+				var ctx = canvas.getContext('2d');
+				var imgd = ctx.getImageData(0, 0, canvas.width, canvas.height);
+				for (var j = 0; j < texture_data.length; j++) {
+					imgd.data[j] = texture_data[j];
+				}
+				ctx.putImageData(imgd, 0, 0);
+
+				textures.push(canvas);
+			}
+
+			// Create 3D scene
+			createScene(vertices, indices, textures);
+
+			// Hide loading, show content
+			document.getElementById('loading').style.display = 'none';
+			document.getElementById('main-content').style.display = 'block';
+
+			// Start animation loop
+			animate();
+		}
+
+		window.onload = function() {
+			// Load granny2.bin
+			var xhr = new XMLHttpRequest();
+			xhr.open('GET', 'granny2.bin', true);
+			xhr.responseType = 'arraybuffer';
+			xhr.onload = function() {
+				if (this.status == 200) {
+					var bin_granny2 = this.response;
+
+					// Load GR2 model file
+					var xhr2 = new XMLHttpRequest();
+					xhr2.open('GET', 'kguardian90_7.gr2', true);
+					xhr2.responseType = 'arraybuffer';
+					xhr2.onload = function() {
+						if (this.status == 200) {
+							loadModel(bin_granny2, this.response);
+						}
+					};
+					xhr2.send(null);
+				}
+			};
+			xhr.send(null);
+		};
+	</script>
+</body>
+</html>

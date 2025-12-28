@@ -144,7 +144,49 @@
 			//['granny_variant', 'ExtendedData', {}],
 			['int', 'ExtendedData', {}],
 		],
-		
+
+		// Animation structures
+		'granny_animation': [
+			['char*', 'Name', { string: true }],
+			['float', 'Duration', {}],
+			['float', 'TimeStep', {}],
+			['float', 'Oversampling', {}],
+			['int', 'TrackGroupCount', {}],
+			['void*', 'TrackGroups', {}]
+		],
+
+		'granny_track_group': [
+			['char*', 'Name', { string: true }],
+			['int', 'VectorTrackCount', {}],
+			['void*', 'VectorTracks', {}],
+			['int', 'TransformTrackCount', {}],
+			['void*', 'TransformTracks', {}],
+			['int', 'TransformLODErrorCount', {}],
+			['void*', 'TransformLODErrors', {}],
+			['int', 'TextTrackCount', {}],
+			['void*', 'TextTracks', {}],
+			['granny_transform', 'InitialPlacement', {}],
+			['int', 'Flags', {}],
+			['float[3]', 'LoopTranslation', {}]
+		],
+
+		'granny_transform_track': [
+			['char*', 'Name', { string: true }],
+			['int', 'Flags', {}],
+			['void*', 'OrientationCurve', {}],
+			['void*', 'PositionCurve', {}],
+			['void*', 'ScaleShearCurve', {}]
+		],
+
+		'granny_bone': [
+			['char*', 'Name', { string: true }],
+			['int', 'ParentIndex', {}],
+			['granny_transform', 'LocalTransform', {}],
+			['float[16]', 'InverseWorld4x4', {}],
+			['float', 'LODError', {}],
+			['void*', 'ExtendedData', {}]
+		],
+
 	};
 
 	/**
@@ -501,37 +543,627 @@
 	Granny2.GrannyRGBA8888PixelFormat = 4;
 	
 	api.CopyTextureImage = function(granny_texture_ptr) {
-		
+
 		var width = this.runtime.get_dword_ptr(granny_texture_ptr + 2 * 4);
 		var height = this.runtime.get_dword_ptr(granny_texture_ptr + 3 * 4);
-		
+
 		console.log(width, height);
-		
+
 		var buffer_size = 4 * width * height;
 		var buffer_ptr = this.runtime.allocator.alloc(buffer_size);
-				
+
 		var result = this.runtime.stdcall(
 			Granny2.exports.GrannyCopyTextureImage,
 			granny_texture_ptr,
-			0, 
+			0,
 			0,
 			this.runtime.get_dword_ptr(Granny2.exports.GrannyRGBA8888PixelFormat),
-			width, 
+			width,
 			height,
 			4 * width,
 			buffer_ptr
 		);
-		
+
 		console.log("CopyTextureImage:", result);
-		
+
 		// TODO how to deallocate? return copy of data?
-		
+
 		return this.runtime.cpu.memory.mem8.subarray(
 			this.runtime.cpu.translate_address_read(buffer_ptr),
 			this.runtime.cpu.translate_address_read(buffer_ptr + buffer_size)
 		);
-		
+
 	};
+
+	// ============================================
+	// Animation API Methods
+	// ============================================
+
+	/**
+	 * Helper function to convert JavaScript float to uint32 bits
+	 */
+	function floatToBits(value) {
+		var buffer = new ArrayBuffer(4);
+		new Float32Array(buffer)[0] = value;
+		return new Uint32Array(buffer)[0];
+	}
+
+	/**
+	 * Helper function to convert uint32 bits to JavaScript float
+	 */
+	function bitsToFloat(bits) {
+		var buffer = new ArrayBuffer(4);
+		new Uint32Array(buffer)[0] = bits;
+		return new Float32Array(buffer)[0];
+	}
+
+	/**
+	 * Find track group that matches the model's skeleton
+	 * @param granny_animation_ptr Pointer to animation
+	 * @param granny_model_ptr Pointer to model
+	 * @returns number Index of matching track group, or -1 if not found
+	 */
+	api.FindTrackGroupForModel = function(granny_animation_ptr, granny_model_ptr) {
+		return this.runtime.stdcall(
+			Granny2.exports.GrannyFindTrackGroupForModel,
+			granny_animation_ptr,
+			granny_model_ptr
+		);
+	};
+
+	/**
+	 * Begin a controlled animation playback
+	 * @param startTime Starting time in seconds
+	 * @param granny_animation_ptr Pointer to animation
+	 * @param trackGroupIndex Track group index
+	 * @param modelInstance Model instance pointer
+	 * @param boneCount Number of bones
+	 * @returns number Control handle pointer
+	 */
+	api.BeginControlledAnimation = function(startTime, granny_animation_ptr, trackGroupIndex, modelInstance, boneCount) {
+		return this.runtime.stdcall(
+			Granny2.exports.GrannyBeginControlledAnimation,
+			floatToBits(startTime),
+			granny_animation_ptr,
+			trackGroupIndex,
+			modelInstance,
+			boneCount
+		);
+	};
+
+	/**
+	 * Play a controlled animation (simpler interface)
+	 * @param startTime Starting time in seconds
+	 * @param granny_animation_ptr Pointer to animation
+	 * @param modelInstance Model instance pointer
+	 * @returns number Control handle pointer
+	 */
+	api.PlayControlledAnimation = function(startTime, granny_animation_ptr, modelInstance) {
+		return this.runtime.stdcall(
+			Granny2.exports.GrannyPlayControlledAnimation,
+			floatToBits(startTime),
+			granny_animation_ptr,
+			modelInstance
+		);
+	};
+
+	/**
+	 * End/cleanup a controlled animation
+	 * @param control Control handle
+	 */
+	api.EndControlledAnimation = function(control) {
+		this.runtime.stdcall(
+			Granny2.exports.GrannyEndControlledAnimation,
+			control
+		);
+	};
+
+	/**
+	 * Free a control
+	 * @param control Control handle
+	 */
+	api.FreeControl = function(control) {
+		this.runtime.stdcall(
+			Granny2.exports.GrannyFreeControl,
+			control
+		);
+	};
+
+	/**
+	 * Free control if complete
+	 * @param control Control handle
+	 * @returns boolean True if freed
+	 */
+	api.FreeControlIfComplete = function(control) {
+		return this.runtime.stdcall(
+			Granny2.exports.GrannyFreeControlIfComplete,
+			control
+		) !== 0;
+	};
+
+	/**
+	 * Set the clock time for a control
+	 * @param control Control handle
+	 * @param newClock New clock time in seconds
+	 */
+	api.SetControlClock = function(control, newClock) {
+		this.runtime.stdcall(
+			Granny2.exports.GrannySetControlClock,
+			control,
+			floatToBits(newClock)
+		);
+	};
+
+	/**
+	 * Get the clock time from a control
+	 * @param control Control handle
+	 * @returns number Current clock time
+	 */
+	api.GetControlClock = function(control) {
+		var bits = this.runtime.stdcall(
+			Granny2.exports.GrannyGetControlClock,
+			control
+		);
+		return bitsToFloat(bits);
+	};
+
+	/**
+	 * Set control speed multiplier
+	 * @param control Control handle
+	 * @param speed Speed multiplier (1.0 = normal)
+	 */
+	api.SetControlSpeed = function(control, speed) {
+		this.runtime.stdcall(
+			Granny2.exports.GrannySetControlSpeed,
+			control,
+			floatToBits(speed)
+		);
+	};
+
+	/**
+	 * Get control speed
+	 * @param control Control handle
+	 * @returns number Speed multiplier
+	 */
+	api.GetControlSpeed = function(control) {
+		var bits = this.runtime.stdcall(
+			Granny2.exports.GrannyGetControlSpeed,
+			control
+		);
+		return bitsToFloat(bits);
+	};
+
+	/**
+	 * Set control weight for blending
+	 * @param control Control handle
+	 * @param weight Weight value (0.0 - 1.0)
+	 */
+	api.SetControlWeight = function(control, weight) {
+		this.runtime.stdcall(
+			Granny2.exports.GrannySetControlWeight,
+			control,
+			floatToBits(weight)
+		);
+	};
+
+	/**
+	 * Get control weight
+	 * @param control Control handle
+	 * @returns number Weight value
+	 */
+	api.GetControlWeight = function(control) {
+		var bits = this.runtime.stdcall(
+			Granny2.exports.GrannyGetControlWeight,
+			control
+		);
+		return bitsToFloat(bits);
+	};
+
+	/**
+	 * Set control loop count
+	 * @param control Control handle
+	 * @param loopCount Number of loops (0 = infinite)
+	 */
+	api.SetControlLoopCount = function(control, loopCount) {
+		this.runtime.stdcall(
+			Granny2.exports.GrannySetControlLoopCount,
+			control,
+			loopCount
+		);
+	};
+
+	/**
+	 * Get control loop count
+	 * @param control Control handle
+	 * @returns number Loop count
+	 */
+	api.GetControlLoopCount = function(control) {
+		return this.runtime.stdcall(
+			Granny2.exports.GrannyGetControlLoopCount,
+			control
+		);
+	};
+
+	/**
+	 * Get current loop index
+	 * @param control Control handle
+	 * @returns number Current loop index
+	 */
+	api.GetControlLoopIndex = function(control) {
+		return this.runtime.stdcall(
+			Granny2.exports.GrannyGetControlLoopIndex,
+			control
+		);
+	};
+
+	/**
+	 * Check if control is active
+	 * @param control Control handle
+	 * @returns boolean True if active
+	 */
+	api.ControlIsActive = function(control) {
+		return this.runtime.stdcall(
+			Granny2.exports.GrannyControlIsActive,
+			control
+		) !== 0;
+	};
+
+	/**
+	 * Check if control/animation is complete
+	 * @param control Control handle
+	 * @returns boolean True if complete
+	 */
+	api.ControlIsComplete = function(control) {
+		return this.runtime.stdcall(
+			Granny2.exports.GrannyControlIsComplete,
+			control
+		) !== 0;
+	};
+
+	/**
+	 * Set control active state
+	 * @param control Control handle
+	 * @param active Active state
+	 */
+	api.SetControlActive = function(control, active) {
+		this.runtime.stdcall(
+			Granny2.exports.GrannySetControlActive,
+			control,
+			active ? 1 : 0
+		);
+	};
+
+	/**
+	 * Get control duration
+	 * @param control Control handle
+	 * @returns number Duration in seconds
+	 */
+	api.GetControlDuration = function(control) {
+		var bits = this.runtime.stdcall(
+			Granny2.exports.GrannyGetControlDuration,
+			control
+		);
+		return bitsToFloat(bits);
+	};
+
+	/**
+	 * Ease control in (blend from 0 to current weight)
+	 * @param control Control handle
+	 * @param duration Duration of ease-in
+	 */
+	api.EaseControlIn = function(control, duration) {
+		this.runtime.stdcall(
+			Granny2.exports.GrannyEaseControlIn,
+			control,
+			floatToBits(duration),
+			0
+		);
+	};
+
+	/**
+	 * Ease control out (blend from current weight to 0)
+	 * @param control Control handle
+	 * @param duration Duration of ease-out
+	 */
+	api.EaseControlOut = function(control, duration) {
+		this.runtime.stdcall(
+			Granny2.exports.GrannyEaseControlOut,
+			control,
+			floatToBits(duration),
+			0
+		);
+	};
+
+	/**
+	 * Set the clock for a model instance
+	 * @param modelInstance Model instance pointer
+	 * @param newClock New clock time
+	 */
+	api.SetModelClock = function(modelInstance, newClock) {
+		this.runtime.stdcall(
+			Granny2.exports.GrannySetModelClock,
+			modelInstance,
+			floatToBits(newClock)
+		);
+	};
+
+	/**
+	 * Free all completed controls for a model
+	 * @param modelInstance Model instance pointer
+	 */
+	api.FreeCompletedModelControls = function(modelInstance) {
+		this.runtime.stdcall(
+			Granny2.exports.GrannyFreeCompletedModelControls,
+			modelInstance
+		);
+	};
+
+	/**
+	 * Sample model animations and accumulate results
+	 * @param modelInstance Model instance pointer
+	 * @param localPoseCount Number of local poses
+	 * @param localPoses Local poses buffer (or 0)
+	 * @param compositeBuffer Composite buffer for results
+	 */
+	api.SampleModelAnimations = function(modelInstance, localPoseCount, localPoses, compositeBuffer) {
+		this.runtime.stdcall(
+			Granny2.exports.GrannySampleModelAnimations,
+			modelInstance,
+			localPoseCount,
+			localPoses,
+			compositeBuffer
+		);
+	};
+
+	/**
+	 * Accumulate model animations
+	 * @param modelInstance Model instance pointer
+	 * @param accumulationMode Accumulation mode
+	 * @param compositeBuffer Composite buffer
+	 */
+	api.AccumulateModelAnimations = function(modelInstance, accumulationMode, compositeBuffer) {
+		this.runtime.stdcall(
+			Granny2.exports.GrannyAccumulateModelAnimations,
+			modelInstance,
+			accumulationMode,
+			compositeBuffer
+		);
+	};
+
+	/**
+	 * Build world pose from local pose
+	 * @param skeleton Skeleton pointer
+	 * @param firstBone First bone index
+	 * @param boneCount Number of bones
+	 * @param localPose Local pose buffer (or 0 for model)
+	 * @param offset4x4 Offset matrix (or 0 for identity)
+	 * @param worldPose World pose buffer
+	 */
+	api.BuildWorldPose = function(skeleton, firstBone, boneCount, localPose, offset4x4, worldPose) {
+		this.runtime.stdcall(
+			Granny2.exports.GrannyBuildWorldPose,
+			skeleton,
+			firstBone,
+			boneCount,
+			localPose,
+			offset4x4,
+			worldPose
+		);
+	};
+
+	/**
+	 * Get world pose as 4x4 matrices
+	 * @param worldPose World pose pointer
+	 * @param boneIndex Bone index
+	 * @param matrix4x4 Output matrix buffer pointer
+	 */
+	api.GetWorldPose4x4 = function(worldPose, boneIndex, matrix4x4) {
+		this.runtime.stdcall(
+			Granny2.exports.GrannyGetWorldPose4x4,
+			worldPose,
+			boneIndex,
+			matrix4x4
+		);
+	};
+
+	/**
+	 * Get entire world pose as 4x4 matrix array
+	 * @param worldPose World pose pointer
+	 * @param matrixBuffer Output buffer pointer
+	 */
+	api.GetWorldPose4x4Array = function(worldPose, matrixBuffer) {
+		this.runtime.stdcall(
+			Granny2.exports.GrannyGetWorldPose4x4Array,
+			worldPose,
+			matrixBuffer
+		);
+	};
+
+	/**
+	 * Get composite transform from world pose
+	 * @param worldPose World pose pointer
+	 * @param boneIndex Bone index
+	 * @param matrix4x4 Output matrix buffer pointer
+	 */
+	api.GetWorldPoseComposite4x4 = function(worldPose, boneIndex, matrix4x4) {
+		this.runtime.stdcall(
+			Granny2.exports.GrannyGetWorldPoseComposite4x4,
+			worldPose,
+			boneIndex,
+			matrix4x4
+		);
+	};
+
+	/**
+	 * Free world pose
+	 * @param worldPose World pose pointer
+	 */
+	api.FreeWorldPose = function(worldPose) {
+		this.runtime.stdcall(
+			Granny2.exports.GrannyFreeWorldPose,
+			worldPose
+		);
+	};
+
+	/**
+	 * Free model instance
+	 * @param modelInstance Model instance pointer
+	 */
+	api.FreeModelInstance = function(modelInstance) {
+		this.runtime.stdcall(
+			Granny2.exports.GrannyFreeModelInstance,
+			modelInstance
+		);
+	};
+
+	/**
+	 * Deform vertices based on world pose (GPU skinning alternative)
+	 * @param deformer Mesh deformer pointer
+	 * @param worldPose World pose pointer
+	 * @param vertexCount Number of vertices
+	 * @param srcVertices Source vertices buffer
+	 * @param dstVertices Destination vertices buffer
+	 */
+	api.DeformVertices = function(deformer, worldPose, vertexCount, srcVertices, dstVertices) {
+		this.runtime.stdcall(
+			Granny2.exports.GrannyDeformVertices,
+			deformer,
+			worldPose,
+			vertexCount,
+			srcVertices,
+			dstVertices
+		);
+	};
+
+	/**
+	 * Get bone count from world pose
+	 * @param worldPose World pose pointer
+	 * @returns number Bone count
+	 */
+	api.GetWorldPoseBoneCount = function(worldPose) {
+		return this.runtime.stdcall(
+			Granny2.exports.GrannyGetWorldPoseBoneCount,
+			worldPose
+		);
+	};
+
+	/**
+	 * Create a new local pose
+	 * @param boneCount Number of bones
+	 * @returns number Local pose pointer
+	 */
+	api.NewLocalPose = function(boneCount) {
+		return this.runtime.stdcall(
+			Granny2.exports.GrannyNewLocalPose,
+			boneCount
+		);
+	};
+
+	/**
+	 * Free local pose
+	 * @param localPose Local pose pointer
+	 */
+	api.FreeLocalPose = function(localPose) {
+		this.runtime.stdcall(
+			Granny2.exports.GrannyFreeLocalPose,
+			localPose
+		);
+	};
+
+	/**
+	 * Get animation from file info by index
+	 * @param fileInfoPtr File info pointer
+	 * @param index Animation index
+	 * @returns Object Animation info { ptr, name, duration }
+	 */
+	api.GetAnimationByIndex = function(fileInfoPtr, index) {
+		var fileInfo = resolve_struct(this.runtime.cpu, fileInfoPtr, Granny2.structs.granny_file_info);
+
+		if (index >= fileInfo.AnimationCount) {
+			return null;
+		}
+
+		var animPtr = this.runtime.get_dword_ptr(fileInfo.Animations + index * 4);
+		var animStruct = resolve_struct(this.runtime.cpu, animPtr, Granny2.structs.granny_animation);
+
+		return {
+			ptr: animPtr,
+			name: animStruct.Name,
+			duration: animStruct.Duration,
+			timeStep: animStruct.TimeStep,
+			trackGroupCount: animStruct.TrackGroupCount
+		};
+	};
+
+	/**
+	 * Get all animations from file info
+	 * @param fileInfoPtr File info pointer
+	 * @returns Array Array of animation info objects
+	 */
+	api.GetAnimations = function(fileInfoPtr) {
+		var fileInfo = resolve_struct(this.runtime.cpu, fileInfoPtr, Granny2.structs.granny_file_info);
+		var animations = [];
+
+		for (var i = 0; i < fileInfo.AnimationCount; i++) {
+			var anim = this.GetAnimationByIndex(fileInfoPtr, i);
+			if (anim) {
+				animations.push(anim);
+			}
+		}
+
+		return animations;
+	};
+
+	/**
+	 * Get bone info from skeleton
+	 * @param skeletonPtr Skeleton pointer
+	 * @param boneIndex Bone index
+	 * @returns Object Bone info
+	 */
+	api.GetBoneInfo = function(skeletonPtr, boneIndex) {
+		var skeleton = resolve_struct(this.runtime.cpu, skeletonPtr, Granny2.structs.granny_skeleton);
+
+		if (boneIndex >= skeleton.BoneCount) {
+			return null;
+		}
+
+		// Read bone pointer from array
+		var bonePtr = this.runtime.get_dword_ptr(skeleton.Bones + boneIndex * 4);
+		var bone = resolve_struct(this.runtime.cpu, bonePtr, Granny2.structs.granny_bone);
+
+		return bone;
+	};
+
+	/**
+	 * Get world pose matrices as Float32Array
+	 * @param worldPose World pose pointer
+	 * @param boneCount Number of bones
+	 * @returns Float32Array Array of 4x4 matrices (boneCount * 16 floats)
+	 */
+	api.GetWorldPoseMatrices = function(worldPose, boneCount) {
+		var bufferSize = boneCount * 16 * 4; // 16 floats * 4 bytes
+		var bufferPtr = this.runtime.allocator.alloc(bufferSize);
+
+		this.GetWorldPose4x4Array(worldPose, bufferPtr);
+
+		var physAddr = this.runtime.cpu.translate_address_read(bufferPtr);
+		var matrices = new Float32Array(boneCount * 16);
+
+		var floatView = new Float32Array(
+			this.runtime.cpu.memory.buffer,
+			physAddr,
+			boneCount * 16
+		);
+		matrices.set(floatView);
+
+		this.runtime.allocator.free(bufferPtr);
+
+		return matrices;
+	};
+
+	// Export helper functions for external use
+	Granny2.floatToBits = floatToBits;
+	Granny2.bitsToFloat = bitsToFloat;
 	
 	function sub_10002BB0(a1, a2) {
 		return (a2 <= 0)
