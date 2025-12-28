@@ -1,0 +1,949 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>GR2 Animation Debug & State Machine</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      font-family: 'Consolas', monospace;
+      background: #1a1a2e;
+      color: #eee;
+      display: flex;
+      height: 100vh;
+    }
+    #sidebar {
+      width: 420px;
+      background: #16213e;
+      padding: 15px;
+      overflow-y: auto;
+      border-right: 2px solid #0f3460;
+    }
+    #render-area {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+    }
+    #render-container {
+      flex: 1;
+      position: relative;
+    }
+    #timeline {
+      height: 80px;
+      background: #0f0f23;
+      padding: 10px;
+      border-top: 2px solid #0f3460;
+    }
+    h1 { font-size: 18px; margin-bottom: 15px; color: #4a9eff; }
+    h2 { font-size: 14px; margin: 15px 0 10px; color: #e94560; }
+    h3 { font-size: 12px; margin: 10px 0 5px; color: #4ea; }
+    .btn {
+      background: #4a9eff;
+      color: white;
+      border: none;
+      padding: 8px 15px;
+      margin: 3px;
+      border-radius: 4px;
+      cursor: pointer;
+      font-size: 12px;
+      transition: all 0.2s;
+    }
+    .btn:hover { background: #3a8eef; transform: scale(1.02); }
+    .btn.active { background: #e94560; }
+    .btn.state-btn { min-width: 100px; }
+    .btn.state-btn.current { background: #4e4; box-shadow: 0 0 10px #4e4; }
+    #log {
+      background: #0f0f23;
+      padding: 10px;
+      font-size: 11px;
+      max-height: 300px;
+      overflow-y: auto;
+      border-radius: 4px;
+      margin-top: 10px;
+    }
+    .log-info { color: #4ae; }
+    .log-warn { color: #ea4; }
+    .log-error { color: #e44; }
+    .log-success { color: #4e4; }
+    .log-anim { color: #e4a; }
+    .log-state { color: #4ea; }
+    .log-bone { color: #ae4; }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 11px;
+      margin: 10px 0;
+    }
+    th, td {
+      border: 1px solid #333;
+      padding: 5px;
+      text-align: left;
+    }
+    th { background: #0f3460; }
+    .state-panel {
+      background: #1a1a2e;
+      padding: 10px;
+      margin: 10px 0;
+      border-radius: 4px;
+      border-left: 3px solid #4ea;
+    }
+    .state-indicator {
+      display: inline-block;
+      width: 12px;
+      height: 12px;
+      border-radius: 50%;
+      margin-right: 8px;
+      background: #666;
+    }
+    .state-indicator.active { background: #4e4; animation: pulse 1s infinite; }
+    @keyframes pulse {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.5; }
+    }
+    .animation-list {
+      max-height: 200px;
+      overflow-y: auto;
+      background: #0f0f23;
+      border-radius: 4px;
+      padding: 5px;
+    }
+    .animation-item {
+      padding: 5px 10px;
+      cursor: pointer;
+      border-radius: 3px;
+      margin: 2px 0;
+    }
+    .animation-item:hover { background: #2a2a4e; }
+    .animation-item.playing { background: #4a9eff33; border-left: 3px solid #4a9eff; }
+    #timeline-slider {
+      width: 100%;
+      margin: 10px 0;
+    }
+    .timeline-info {
+      display: flex;
+      justify-content: space-between;
+      font-size: 11px;
+      color: #888;
+    }
+    .skeleton-tree {
+      font-size: 11px;
+      max-height: 150px;
+      overflow-y: auto;
+      background: #0f0f23;
+      padding: 5px;
+      border-radius: 4px;
+    }
+    .bone-item {
+      padding: 2px 0;
+      padding-left: calc(var(--depth) * 15px);
+    }
+  </style>
+</head>
+<body>
+  <div id="sidebar">
+    <h1>GR2 Animation Debug</h1>
+
+    <div>
+      <button class="btn" onclick="loadFile('empelium90_0.gr2')">empelium90_0</button>
+      <button class="btn" onclick="loadFile('guildflag90_1.gr2')">guildflag90_1</button>
+      <button class="btn" onclick="loadFile('kguardian90_7.gr2')">kguardian90_7</button>
+      <button class="btn" onclick="loadFile('sguardian90_9.gr2')">sguardian90_9</button>
+    </div>
+
+    <h2>Animation State Machine</h2>
+    <div class="state-panel">
+      <div style="margin-bottom: 10px;">
+        Current State: <strong id="currentState">NONE</strong>
+      </div>
+      <button class="btn state-btn" id="btnStop" onclick="stateMachine.setState('Stop')">Stop</button>
+      <button class="btn state-btn" id="btnMoveout" onclick="stateMachine.setState('Moveout')">Moveout</button>
+      <button class="btn state-btn" id="btnAttackout" onclick="stateMachine.setState('Attackout')">Attackout</button>
+      <button class="btn state-btn" id="btnDamageout" onclick="stateMachine.setState('Damageout')">Damageout</button>
+      <button class="btn state-btn" id="btnDeadout" onclick="stateMachine.setState('Deadout')">Deadout</button>
+    </div>
+
+    <h2>Available Animations</h2>
+    <div id="animation-list" class="animation-list">
+      <span style="color:#666;">Load a file to see animations...</span>
+    </div>
+
+    <h2>Playback Controls</h2>
+    <div>
+      <button class="btn" id="btnPlay" onclick="togglePlayback()">Play</button>
+      <button class="btn" onclick="stopAnimation()">Stop</button>
+      <button class="btn" onclick="resetAnimation()">Reset</button>
+      <button class="btn" id="btnLoop" onclick="toggleLoop()">Loop: ON</button>
+    </div>
+    <div style="margin-top: 10px;">
+      <label>Speed: <span id="speedValue">1.0x</span></label>
+      <input type="range" id="speedSlider" min="0.1" max="3" step="0.1" value="1" onchange="setSpeed(this.value)">
+    </div>
+
+    <h2>Skeleton</h2>
+    <div id="skeleton-info" class="skeleton-tree">
+      <span style="color:#666;">No skeleton loaded...</span>
+    </div>
+
+    <h2>Debug Log</h2>
+    <button class="btn" onclick="clearLog()">Clear Log</button>
+    <div id="log"></div>
+  </div>
+
+  <div id="render-area">
+    <div id="render-container"></div>
+    <div id="timeline">
+      <input type="range" id="timeline-slider" min="0" max="100" value="0" step="0.1" oninput="seekAnimation(this.value)">
+      <div class="timeline-info">
+        <span id="timelineCurrent">0.00s</span>
+        <span id="timelineAnimation">No animation</span>
+        <span id="timelineDuration">0.00s</span>
+      </div>
+    </div>
+  </div>
+
+  <script src="three.min.js"></script>
+  <script src="const.js"></script>
+  <script src="main.js"></script>
+  <script src="memory.js"></script>
+  <script src="io.js"></script>
+  <script src="v86.js"></script>
+  <script src="fpu.js"></script>
+  <script src="granny2.js"></script>
+  <script src="granny2.subs.js"></script>
+  <script src="granny2.def.js"></script>
+  <script src="pe_env.js"></script>
+
+  <script>
+    // Performance utilities
+    function throttle(func, limit) {
+      let inThrottle;
+      return function(...args) {
+        if (!inThrottle) {
+          func.apply(this, args);
+          inThrottle = true;
+          setTimeout(() => inThrottle = false, limit);
+        }
+      };
+    }
+
+    function debounce(func, wait) {
+      let timeout;
+      return function(...args) {
+        clearTimeout(timeout);
+        timeout = setTimeout(() => func.apply(this, args), wait);
+      };
+    }
+
+    // Cached DOM references
+    const DOM = {
+      log: null,
+      renderContainer: null,
+      animationList: null,
+      skeletonInfo: null,
+      currentState: null,
+      timelineSlider: null,
+      timelineCurrent: null,
+      timelineAnimation: null,
+      timelineDuration: null,
+      btnPlay: null,
+      btnLoop: null,
+      speedValue: null,
+      init() {
+        this.log = document.getElementById('log');
+        this.renderContainer = document.getElementById('render-container');
+        this.animationList = document.getElementById('animation-list');
+        this.skeletonInfo = document.getElementById('skeleton-info');
+        this.currentState = document.getElementById('currentState');
+        this.timelineSlider = document.getElementById('timeline-slider');
+        this.timelineCurrent = document.getElementById('timelineCurrent');
+        this.timelineAnimation = document.getElementById('timelineAnimation');
+        this.timelineDuration = document.getElementById('timelineDuration');
+        this.btnPlay = document.getElementById('btnPlay');
+        this.btnLoop = document.getElementById('btnLoop');
+        this.speedValue = document.getElementById('speedValue');
+      }
+    };
+
+    // Logger with batched updates
+    const Logger = {
+      buffer: [],
+      maxLogEntries: 200,
+      flushScheduled: false,
+
+      log: function(msg, type = 'info') {
+        this.buffer.push({ msg, type, time: new Date().toLocaleTimeString() });
+        console.log(`[${type.toUpperCase()}]`, msg);
+
+        if (!this.flushScheduled) {
+          this.flushScheduled = true;
+          requestAnimationFrame(() => this.flush());
+        }
+      },
+
+      flush: function() {
+        if (this.buffer.length === 0) {
+          this.flushScheduled = false;
+          return;
+        }
+
+        const logEl = DOM.log;
+        if (!logEl) {
+          this.flushScheduled = false;
+          return;
+        }
+
+        const fragment = document.createDocumentFragment();
+        this.buffer.forEach(({ msg, type, time }) => {
+          const div = document.createElement('div');
+          div.className = 'log-' + type;
+          div.textContent = `[${time}] ${msg}`;
+          fragment.appendChild(div);
+        });
+
+        logEl.appendChild(fragment);
+        this.buffer = [];
+        this.flushScheduled = false;
+
+        while (logEl.children.length > this.maxLogEntries) {
+          logEl.removeChild(logEl.firstChild);
+        }
+
+        requestAnimationFrame(() => {
+          logEl.scrollTop = logEl.scrollHeight;
+        });
+      },
+
+      info: function(msg) { this.log(msg, 'info'); },
+      warn: function(msg) { this.log(msg, 'warn'); },
+      error: function(msg) { this.log(msg, 'error'); },
+      success: function(msg) { this.log(msg, 'success'); },
+      anim: function(msg) { this.log(msg, 'anim'); },
+      state: function(msg) { this.log(msg, 'state'); },
+      bone: function(msg) { this.log(msg, 'bone'); }
+    };
+
+    // ==========================================
+    // Animation State Machine
+    // ==========================================
+    class AnimationStateMachine {
+      constructor() {
+        this.states = ['Stop', 'Moveout', 'Attackout', 'Damageout', 'Deadout'];
+        this.currentState = null;
+        this.stateAnimations = new Map();
+        this.onStateChange = null;
+      }
+
+      mapAnimationToState(animationName) {
+        const name = animationName.toLowerCase();
+
+        // Map animation names to states
+        if (name.includes('stop') || name.includes('idle') || name.includes('wait')) {
+          return 'Stop';
+        } else if (name.includes('move') || name.includes('walk') || name.includes('run')) {
+          return 'Moveout';
+        } else if (name.includes('attack') || name.includes('atk') || name.includes('hit')) {
+          return 'Attackout';
+        } else if (name.includes('damage') || name.includes('hurt') || name.includes('pain')) {
+          return 'Damageout';
+        } else if (name.includes('dead') || name.includes('die') || name.includes('death')) {
+          return 'Deadout';
+        }
+        return null;
+      }
+
+      loadAnimations(animations) {
+        this.stateAnimations.clear();
+
+        animations.forEach(anim => {
+          const state = this.mapAnimationToState(anim.name);
+          if (state) {
+            if (!this.stateAnimations.has(state)) {
+              this.stateAnimations.set(state, []);
+            }
+            this.stateAnimations.get(state).push(anim);
+            Logger.state(`Mapped "${anim.name}" -> ${state}`);
+          }
+        });
+
+        // Log unmapped animations
+        animations.forEach(anim => {
+          if (!this.mapAnimationToState(anim.name)) {
+            Logger.warn(`Unmapped animation: "${anim.name}"`);
+          }
+        });
+      }
+
+      setState(newState) {
+        if (!this.states.includes(newState)) {
+          Logger.error(`Invalid state: ${newState}`);
+          return;
+        }
+
+        const prevState = this.currentState;
+        this.currentState = newState;
+
+        Logger.state(`State transition: ${prevState || 'NONE'} -> ${newState}`);
+
+        // Update UI
+        this.updateStateButtons();
+        DOM.currentState.textContent = newState;
+
+        // Get animation for this state
+        const animations = this.stateAnimations.get(newState);
+        if (animations && animations.length > 0) {
+          // Play first animation for this state
+          if (this.onStateChange) {
+            this.onStateChange(animations[0]);
+          }
+        } else {
+          Logger.warn(`No animation found for state: ${newState}`);
+        }
+      }
+
+      updateStateButtons() {
+        this.states.forEach(state => {
+          const btn = document.getElementById('btn' + state);
+          if (btn) {
+            btn.classList.toggle('current', state === this.currentState);
+          }
+        });
+      }
+
+      getAnimationsForState(state) {
+        return this.stateAnimations.get(state) || [];
+      }
+    }
+
+    // ==========================================
+    // Animation Controller
+    // ==========================================
+    class AnimationController {
+      constructor() {
+        this.animations = [];
+        this.trackGroups = [];
+        this.skeleton = null;
+        this.bones = [];
+        this.currentAnimation = null;
+        this.currentTime = 0;
+        this.duration = 0;
+        this.isPlaying = false;
+        this.isLooping = true;
+        this.speed = 1.0;
+        this.lastUpdateTime = 0;
+      }
+
+      loadFromFileInfo(gr2, fileInfo) {
+        this.animations = [];
+        this.trackGroups = [];
+        this.bones = [];
+
+        // Load animations
+        Logger.anim('='.repeat(50));
+        Logger.anim('LOADING ANIMATIONS');
+        Logger.anim('='.repeat(50));
+
+        Logger.anim(`Animation count: ${fileInfo.AnimationCount}`);
+        Logger.anim(`Track group count: ${fileInfo.TrackGroupCount}`);
+
+        // Parse animations
+        for (let i = 0; i < fileInfo.AnimationCount; i++) {
+          try {
+            const animPtr = gr2.runtime.get_dword_ptr(fileInfo.Animations + 4 * i);
+            const anim = Granny2.readStructure(gr2.runtime.cpu, animPtr, Granny2.structs.granny_animation);
+
+            this.animations.push({
+              index: i,
+              ptr: animPtr,
+              name: anim.Name || `Animation_${i}`,
+              duration: anim.Duration,
+              timeStep: anim.TimeStep,
+              trackGroupCount: anim.TrackGroupCount,
+              data: anim
+            });
+
+            Logger.anim(`Animation ${i}: "${anim.Name}" (${anim.Duration.toFixed(2)}s, ${anim.TrackGroupCount} track groups)`);
+          } catch (e) {
+            Logger.error(`Failed to read animation ${i}: ${e.message}`);
+          }
+        }
+
+        // Parse track groups
+        for (let i = 0; i < fileInfo.TrackGroupCount; i++) {
+          try {
+            const tgPtr = gr2.runtime.get_dword_ptr(fileInfo.TrackGroups + 4 * i);
+            const tg = Granny2.readStructure(gr2.runtime.cpu, tgPtr, Granny2.structs.granny_track_group);
+
+            this.trackGroups.push({
+              index: i,
+              ptr: tgPtr,
+              name: tg.Name || `TrackGroup_${i}`,
+              transformTrackCount: tg.TransformTrackCount,
+              data: tg
+            });
+
+            Logger.anim(`TrackGroup ${i}: "${tg.Name}" (${tg.TransformTrackCount} transform tracks)`);
+          } catch (e) {
+            Logger.error(`Failed to read track group ${i}: ${e.message}`);
+          }
+        }
+
+        // Load skeleton
+        if (fileInfo.SkeletonCount > 0 && fileInfo.Skeletons && fileInfo.Skeletons.length > 0) {
+          this.loadSkeleton(gr2, fileInfo.Skeletons[0]);
+        }
+
+        Logger.success(`Loaded ${this.animations.length} animations, ${this.trackGroups.length} track groups`);
+
+        return this.animations;
+      }
+
+      loadSkeleton(gr2, skeleton) {
+        Logger.bone('='.repeat(50));
+        Logger.bone('LOADING SKELETON');
+        Logger.bone('='.repeat(50));
+
+        this.skeleton = skeleton;
+        this.bones = [];
+
+        Logger.bone(`Skeleton: "${skeleton.Name}"`);
+        Logger.bone(`Bone count: ${skeleton.BoneCount}`);
+
+        if (skeleton.BoneCount > 0 && skeleton.Bones) {
+          // Calculate bone structure size
+          const boneStructSize = this.calculateBoneStructSize();
+
+          for (let i = 0; i < skeleton.BoneCount; i++) {
+            try {
+              const bonePtr = skeleton.Bones + i * boneStructSize;
+              const bone = Granny2.readStructure(gr2.runtime.cpu, bonePtr, Granny2.structs.granny_bone);
+
+              this.bones.push({
+                index: i,
+                ptr: bonePtr,
+                name: bone.Name || `Bone_${i}`,
+                parentIndex: bone.ParentIndex,
+                localTransform: bone.LocalTransform,
+                data: bone
+              });
+
+              const indent = '  '.repeat(this.getBoneDepth(i));
+              Logger.bone(`${indent}Bone ${i}: "${bone.Name}" (parent: ${bone.ParentIndex})`);
+            } catch (e) {
+              Logger.warn(`Failed to read bone ${i}: ${e.message}`);
+            }
+          }
+        }
+
+        this.updateSkeletonUI();
+      }
+
+      calculateBoneStructSize() {
+        // granny_bone: char* + int + granny_transform + float[16] + float + int + int
+        // granny_transform: int + float[3] + float[4] + float[9] = 4 + 12 + 16 + 36 = 68 bytes
+        // Total: 4 + 4 + 68 + 64 + 4 + 4 + 4 = 152 bytes
+        return 152;
+      }
+
+      getBoneDepth(boneIndex) {
+        let depth = 0;
+        let current = this.bones[boneIndex];
+        while (current && current.parentIndex >= 0 && depth < 20) {
+          depth++;
+          current = this.bones[current.parentIndex];
+        }
+        return depth;
+      }
+
+      updateSkeletonUI() {
+        if (this.bones.length === 0) {
+          DOM.skeletonInfo.innerHTML = '<span style="color:#666;">No skeleton data</span>';
+          return;
+        }
+
+        let html = `<div style="margin-bottom:5px;color:#4ea;">Bones: ${this.bones.length}</div>`;
+
+        this.bones.forEach(bone => {
+          const depth = this.getBoneDepth(bone.index);
+          html += `<div class="bone-item" style="--depth:${depth}">
+            ${bone.name} <span style="color:#666;">(${bone.index})</span>
+          </div>`;
+        });
+
+        DOM.skeletonInfo.innerHTML = html;
+      }
+
+      playAnimation(animation) {
+        this.currentAnimation = animation;
+        this.currentTime = 0;
+        this.duration = animation.duration;
+        this.isPlaying = true;
+        this.lastUpdateTime = performance.now();
+
+        Logger.anim(`Playing: "${animation.name}" (${animation.duration.toFixed(2)}s)`);
+
+        this.updateTimelineUI();
+        DOM.btnPlay.textContent = 'Pause';
+        DOM.timelineAnimation.textContent = animation.name;
+        DOM.timelineDuration.textContent = animation.duration.toFixed(2) + 's';
+      }
+
+      update(timestamp) {
+        if (!this.isPlaying || !this.currentAnimation) return;
+
+        const deltaTime = (timestamp - this.lastUpdateTime) / 1000;
+        this.lastUpdateTime = timestamp;
+
+        this.currentTime += deltaTime * this.speed;
+
+        if (this.currentTime >= this.duration) {
+          if (this.isLooping) {
+            this.currentTime = this.currentTime % this.duration;
+          } else {
+            this.currentTime = this.duration;
+            this.isPlaying = false;
+            DOM.btnPlay.textContent = 'Play';
+          }
+        }
+
+        this.updateTimelineUI();
+      }
+
+      updateTimelineUI() {
+        if (!this.currentAnimation) return;
+
+        const progress = this.duration > 0 ? (this.currentTime / this.duration) * 100 : 0;
+        DOM.timelineSlider.value = progress;
+        DOM.timelineCurrent.textContent = this.currentTime.toFixed(2) + 's';
+      }
+
+      seek(percent) {
+        if (!this.currentAnimation) return;
+        this.currentTime = (percent / 100) * this.duration;
+        this.updateTimelineUI();
+      }
+
+      togglePlayback() {
+        this.isPlaying = !this.isPlaying;
+        if (this.isPlaying) {
+          this.lastUpdateTime = performance.now();
+        }
+        DOM.btnPlay.textContent = this.isPlaying ? 'Pause' : 'Play';
+      }
+
+      stop() {
+        this.isPlaying = false;
+        this.currentTime = 0;
+        this.updateTimelineUI();
+        DOM.btnPlay.textContent = 'Play';
+      }
+
+      reset() {
+        this.currentTime = 0;
+        this.updateTimelineUI();
+      }
+
+      setSpeed(speed) {
+        this.speed = speed;
+        DOM.speedValue.textContent = speed.toFixed(1) + 'x';
+      }
+
+      toggleLoop() {
+        this.isLooping = !this.isLooping;
+        DOM.btnLoop.textContent = 'Loop: ' + (this.isLooping ? 'ON' : 'OFF');
+        DOM.btnLoop.classList.toggle('active', this.isLooping);
+      }
+    }
+
+    // ==========================================
+    // Global State
+    // ==========================================
+    let scene, camera, renderer;
+    let currentModel = null;
+    let granny2Binary = null;
+    let gr2Instance = null;
+    let needsRender = true;
+    let lastRenderTime = 0;
+    const MIN_RENDER_INTERVAL = 16;
+
+    const animController = new AnimationController();
+    const stateMachine = new AnimationStateMachine();
+
+    stateMachine.onStateChange = (animation) => {
+      animController.playAnimation(animation);
+      updateAnimationListUI();
+    };
+
+    function clearLog() {
+      if (DOM.log) DOM.log.innerHTML = '';
+      Logger.buffer = [];
+    }
+
+    function init() {
+      DOM.init();
+
+      Logger.info('Initializing Animation Debug...');
+
+      scene = new THREE.Scene();
+      scene.background = new THREE.Color(0x1a1a2e);
+
+      const container = DOM.renderContainer;
+      camera = new THREE.PerspectiveCamera(45, container.clientWidth / container.clientHeight, 1, 10000);
+      camera.position.set(25, 35, 25);
+      camera.lookAt(new THREE.Vector3(0, 10, 0));
+
+      renderer = new THREE.WebGLRenderer({ antialias: true });
+      renderer.setSize(container.clientWidth, container.clientHeight);
+      container.appendChild(renderer.domElement);
+
+      scene.add(new THREE.AmbientLight(0x404040));
+      const directional = new THREE.DirectionalLight(0xffffff, 0.5);
+      directional.position.set(0, 20, -50);
+      scene.add(directional);
+
+      scene.add(new THREE.AxesHelper(100));
+      scene.add(new THREE.GridHelper(100, 10));
+
+      setupControls();
+      window.addEventListener('resize', debounce(onWindowResize, 100));
+
+      animate();
+      loadGranny2Binary();
+    }
+
+    function setupControls() {
+      let isDragging = false;
+      let previousMouseX = 0;
+      let previousMouseY = 0;
+
+      renderer.domElement.addEventListener('mousedown', () => isDragging = true);
+      renderer.domElement.addEventListener('mouseup', () => isDragging = false);
+      renderer.domElement.addEventListener('mouseleave', () => isDragging = false);
+
+      const handleMouseMove = throttle((e) => {
+        if (isDragging && currentModel) {
+          currentModel.rotation.y += (e.offsetX - previousMouseX) * 0.01;
+          currentModel.rotation.x += (e.offsetY - previousMouseY) * 0.01;
+          needsRender = true;
+        }
+        previousMouseX = e.offsetX;
+        previousMouseY = e.offsetY;
+      }, 16);
+
+      renderer.domElement.addEventListener('mousemove', handleMouseMove);
+
+      const handleWheel = throttle((e) => {
+        e.preventDefault();
+        camera.position.z += e.deltaY * 0.1;
+        needsRender = true;
+      }, 16);
+
+      renderer.domElement.addEventListener('wheel', handleWheel, { passive: false });
+    }
+
+    async function loadGranny2Binary() {
+      try {
+        Logger.info('Loading granny2.bin...');
+        const response = await fetch('granny2.bin');
+        granny2Binary = await response.arrayBuffer();
+        Logger.success('granny2.bin loaded successfully!');
+      } catch (error) {
+        Logger.error('Failed to load granny2.bin: ' + error.message);
+      }
+    }
+
+    async function loadFile(filename) {
+      if (!granny2Binary) {
+        Logger.error('granny2.bin not loaded yet!');
+        return;
+      }
+
+      try {
+        Logger.info(`Loading ${filename}...`);
+
+        const response = await fetch(filename);
+        const arrayBuffer = await response.arrayBuffer();
+
+        Logger.info(`File size: ${arrayBuffer.byteLength} bytes`);
+
+        parseAndAnalyze(arrayBuffer, filename);
+
+      } catch (error) {
+        Logger.error('Error loading file: ' + error.message);
+      }
+    }
+
+    function parseAndAnalyze(gr2ArrayBuffer, filename) {
+      Logger.info('='.repeat(50));
+      Logger.info(`PARSING: ${filename}`);
+      Logger.info('='.repeat(50));
+
+      const gr2 = new Granny2(granny2Binary);
+      gr2Instance = gr2;
+
+      const grannyFilePtr = gr2.ReadEntireFileFromMemory(gr2ArrayBuffer);
+      const fileInfoPtr = gr2.GetFileInfo(grannyFilePtr);
+      const fileInfo = Granny2.readStructure(gr2.runtime.cpu, fileInfoPtr, Granny2.structs.granny_file_info);
+
+      Logger.info('--- FILE INFO ---');
+      Logger.info(`Models: ${fileInfo.ModelCount}`);
+      Logger.info(`Meshes: ${fileInfo.MeshCount}`);
+      Logger.info(`Skeletons: ${fileInfo.SkeletonCount}`);
+      Logger.info(`Animations: ${fileInfo.AnimationCount}`);
+      Logger.info(`Track Groups: ${fileInfo.TrackGroupCount}`);
+
+      // Load animations
+      const animations = animController.loadFromFileInfo(gr2, fileInfo);
+
+      // Map animations to state machine
+      stateMachine.loadAnimations(animations);
+
+      // Update UI
+      updateAnimationListUI();
+
+      // Load model for visualization
+      loadModelMesh(gr2, fileInfo);
+
+      // Default to Stop state if available
+      if (stateMachine.stateAnimations.has('Stop')) {
+        stateMachine.setState('Stop');
+      } else if (animations.length > 0) {
+        animController.playAnimation(animations[0]);
+      }
+    }
+
+    function updateAnimationListUI() {
+      if (animController.animations.length === 0) {
+        DOM.animationList.innerHTML = '<span style="color:#666;">No animations found</span>';
+        return;
+      }
+
+      let html = '';
+      animController.animations.forEach((anim, i) => {
+        const isPlaying = animController.currentAnimation === anim;
+        const state = stateMachine.mapAnimationToState(anim.name);
+        const stateTag = state ? `<span style="color:#4ea;font-size:10px;">[${state}]</span>` : '';
+
+        html += `<div class="animation-item ${isPlaying ? 'playing' : ''}"
+                     onclick="playAnimationByIndex(${i})">
+          ${anim.name} ${stateTag}
+          <span style="color:#888;font-size:10px;">(${anim.duration.toFixed(2)}s)</span>
+        </div>`;
+      });
+
+      DOM.animationList.innerHTML = html;
+    }
+
+    function playAnimationByIndex(index) {
+      const anim = animController.animations[index];
+      if (anim) {
+        animController.playAnimation(anim);
+        updateAnimationListUI();
+      }
+    }
+
+    function loadModelMesh(gr2, fileInfo) {
+      // Simplified mesh loading for visualization
+      if (fileInfo.ModelCount === 0 || !fileInfo.Models || fileInfo.Models.length === 0) {
+        Logger.warn('No models to render');
+        return;
+      }
+
+      if (currentModel) {
+        scene.remove(currentModel);
+      }
+
+      currentModel = new THREE.Group();
+
+      // Create a simple skeleton visualization
+      if (animController.bones.length > 0) {
+        const boneMaterial = new THREE.LineBasicMaterial({ color: 0x00ff00 });
+
+        animController.bones.forEach(bone => {
+          if (bone.parentIndex >= 0) {
+            const parent = animController.bones[bone.parentIndex];
+            if (parent && bone.localTransform && parent.localTransform) {
+              // Simple bone line visualization
+              const geometry = new THREE.BufferGeometry();
+              const positions = new Float32Array([
+                0, bone.index * 0.5, 0,
+                0, parent.index * 0.5, 0
+              ]);
+              geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+              const line = new THREE.Line(geometry, boneMaterial);
+              currentModel.add(line);
+            }
+          }
+        });
+      }
+
+      // Add a placeholder sphere to show model position
+      const sphereGeom = new THREE.SphereGeometry(2, 16, 16);
+      const sphereMat = new THREE.MeshLambertMaterial({ color: 0x4a9eff, wireframe: true });
+      const sphere = new THREE.Mesh(sphereGeom, sphereMat);
+      sphere.position.y = 10;
+      currentModel.add(sphere);
+
+      scene.add(currentModel);
+      needsRender = true;
+
+      Logger.success('Model visualization created');
+    }
+
+    // Playback controls
+    function togglePlayback() {
+      animController.togglePlayback();
+    }
+
+    function stopAnimation() {
+      animController.stop();
+    }
+
+    function resetAnimation() {
+      animController.reset();
+    }
+
+    function toggleLoop() {
+      animController.toggleLoop();
+    }
+
+    function setSpeed(value) {
+      animController.setSpeed(parseFloat(value));
+    }
+
+    function seekAnimation(value) {
+      animController.seek(parseFloat(value));
+    }
+
+    function animate(timestamp) {
+      requestAnimationFrame(animate);
+
+      if (timestamp - lastRenderTime < MIN_RENDER_INTERVAL) {
+        return;
+      }
+
+      // Update animation
+      animController.update(timestamp);
+
+      if (animController.isPlaying || needsRender) {
+        renderer.render(scene, camera);
+        needsRender = false;
+        lastRenderTime = timestamp;
+      }
+    }
+
+    function onWindowResize() {
+      const container = DOM.renderContainer;
+      if (!container) return;
+
+      camera.aspect = container.clientWidth / container.clientHeight;
+      camera.updateProjectionMatrix();
+      renderer.setSize(container.clientWidth, container.clientHeight);
+      needsRender = true;
+    }
+
+    // Initialize
+    init();
+  </script>
+</body>
+</html>

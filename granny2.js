@@ -144,7 +144,73 @@
 			//['granny_variant', 'ExtendedData', {}],
 			['int', 'ExtendedData', {}],
 		],
-		
+
+		// ==========================================
+		// Animation Structures
+		// ==========================================
+
+		// Bone structure for skeleton hierarchy
+		'granny_bone': [
+			['char*', 'Name', { string: true }],
+			['int', 'ParentIndex', {}],
+			['granny_transform', 'LocalTransform', {}],
+			['float[16]', 'InverseWorld4x4', {}],
+			['float', 'LODError', {}],
+			['int', 'ExtendedData_Variant_Type', {}],
+			['int', 'ExtendedData_Variant_Object', {}],
+		],
+
+		// Animation curve data
+		'granny_curve': [
+			['int', 'Format', {}],
+			['int', 'Degree', {}],
+			['int', 'KnotCount', {}],
+			['void*', 'Knots', {}],
+			['int', 'ControlCount', {}],
+			['void*', 'Controls', {}],
+		],
+
+		// Transform track - animates a single bone
+		'granny_transform_track': [
+			['char*', 'Name', { string: true }],
+			['int', 'Flags', {}],
+			['granny_curve', 'PositionCurve', {}],
+			['granny_curve', 'OrientationCurve', {}],
+			['granny_curve', 'ScaleShearCurve', {}],
+		],
+
+		// Track group - collection of transform tracks for a model
+		'granny_track_group': [
+			['char*', 'Name', { string: true }],
+			['int', 'VectorTrackCount', {}],
+			['void*', 'VectorTracks', {}],
+			['int', 'TransformTrackCount', {}],
+			['void*', 'TransformTracks', {}],
+			['int', 'TransformLODErrorCount', {}],
+			['void*', 'TransformLODErrors', {}],
+			['int', 'TextTrackCount', {}],
+			['void*', 'TextTracks', {}],
+			['granny_transform', 'InitialPlacement', {}],
+			['int', 'Flags', {}],
+			['float[3]', 'LoopTranslation', {}],
+			['void*', 'PeriodicLoop', {}],
+			['void*', 'RootMotion', {}],
+			['int', 'ExtendedData_Variant_Type', {}],
+			['int', 'ExtendedData_Variant_Object', {}],
+		],
+
+		// Animation - contains track groups and timing
+		'granny_animation': [
+			['char*', 'Name', { string: true }],
+			['float', 'Duration', {}],
+			['float', 'TimeStep', {}],
+			['float', 'Oversampling', {}],
+			['int', 'TrackGroupCount', {}],
+			['void*', 'TrackGroups', {}],
+			['int', 'ExtendedData_Variant_Type', {}],
+			['int', 'ExtendedData_Variant_Object', {}],
+		],
+
 	};
 
 	/**
