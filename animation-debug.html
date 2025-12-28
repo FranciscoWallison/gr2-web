@@ -638,19 +638,26 @@
         Logger.bone(`Bone count: ${skeleton.BoneCount}`);
 
         if (skeleton.BoneCount > 0 && skeleton.Bones) {
-          // Bones is an array of POINTERS, not a contiguous block!
-          // granny_bone layout:
-          // +0: char* Name
-          // +4: int ParentIndex
-          // +8: granny_transform LocalTransform (68 bytes)
-          // +76: float[16] InverseWorld4x4 (64 bytes)
-          // +140: float LODError
-          // +144: int ExtendedData_Type
-          // +148: int ExtendedData_Object
+          // granny_bone structure size:
+          // +0: char* Name (4)
+          // +4: int ParentIndex (4)
+          // +8: granny_transform LocalTransform (4 + 12 + 16 + 36 = 68)
+          // +76: float[16] InverseWorld4x4 (64)
+          // +140: float LODError (4)
+          // +144: int ExtendedData_Type (4)
+          // +148: int ExtendedData_Object (4)
+          // Total: 152 bytes per bone
+          const BONE_STRUCT_SIZE = 152;
+
+          // skeleton.Bones is a pointer to a CONTIGUOUS block of bone structures
+          const bonesBasePtr = skeleton.Bones;
+
+          Logger.bone(`Bones base ptr: 0x${bonesBasePtr.toString(16)}`);
+
           for (let i = 0; i < skeleton.BoneCount; i++) {
             try {
-              // Get pointer to bone (array of pointers)
-              const bonePtr = gr2.runtime.get_dword_ptr(skeleton.Bones + 4 * i);
+              // Calculate pointer to this bone in the contiguous block
+              const bonePtr = bonesBasePtr + i * BONE_STRUCT_SIZE;
 
               // Validate pointer before reading
               if (!MemHelper.isValidPtr(bonePtr)) {
