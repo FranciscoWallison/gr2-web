@@ -324,12 +324,53 @@
     };
 
     // ==========================================
+    // Memory Reading Helpers (manual offset reading)
+    // ==========================================
+    const MemHelper = {
+      readStr(gr2, ptr) {
+        if (!ptr) return '';
+        try {
+          return gr2.runtime.cpu.memory.read_string(
+            gr2.runtime.cpu.translate_address_read(ptr)
+          );
+        } catch (e) {
+          return '';
+        }
+      },
+
+      readF32(gr2, addr) {
+        try {
+          const bytes = new Uint8Array(4);
+          for (let i = 0; i < 4; i++) {
+            bytes[i] = gr2.runtime.cpu.memory.mem8[
+              gr2.runtime.cpu.translate_address_read(addr + i)
+            ];
+          }
+          return new Float32Array(bytes.buffer)[0];
+        } catch (e) {
+          return 0;
+        }
+      },
+
+      readI32(gr2, addr) {
+        return gr2.runtime.get_dword_ptr(addr) | 0; // Force signed
+      },
+
+      readU32(gr2, addr) {
+        return gr2.runtime.get_dword_ptr(addr) >>> 0; // Force unsigned
+      }
+    };
+
+    // ==========================================
     // Animation State Machine
     // ==========================================
     class AnimationStateMachine {
       constructor() {
         this.states = ['Stop', 'Moveout', 'Attackout', 'Damageout', 'Deadout'];
+        this.baseStates = ['Stop', 'Moveout']; // Looping base states
+        this.overlayStates = ['Attackout', 'Damageout', 'Deadout']; // One-shot states
         this.currentState = null;
+        this.previousBaseState = 'Stop'; // State to return to after overlay
         this.stateAnimations = new Map();
         this.onStateChange = null;
       }
@@ -338,13 +379,13 @@
         const name = animationName.toLowerCase();
 
         // Map animation names to states
-        if (name.includes('stop') || name.includes('idle') || name.includes('wait')) {
+        if (name.includes('stop') || name.includes('idle') || name.includes('wait') || name.includes('stand')) {
           return 'Stop';
         } else if (name.includes('move') || name.includes('walk') || name.includes('run')) {
           return 'Moveout';
-        } else if (name.includes('attack') || name.includes('atk') || name.includes('hit')) {
+        } else if (name.includes('attack') || name.includes('atk') || name.includes('hit') || name.includes('swing')) {
           return 'Attackout';
-        } else if (name.includes('damage') || name.includes('hurt') || name.includes('pain')) {
+        } else if (name.includes('damage') || name.includes('hurt') || name.includes('pain') || name.includes('hit')) {
           return 'Damageout';
         } else if (name.includes('dead') || name.includes('die') || name.includes('death')) {
           return 'Deadout';
@@ -366,21 +407,36 @@
           }
         });
 
-        // Log unmapped animations
+        // Also add ALL animations as available even if not mapped to a state
         animations.forEach(anim => {
           if (!this.mapAnimationToState(anim.name)) {
-            Logger.warn(`Unmapped animation: "${anim.name}"`);
+            Logger.warn(`Unmapped animation: "${anim.name}" (still playable from list)`);
           }
         });
       }
 
-      setState(newState) {
+      isBaseState(state) {
+        return this.baseStates.includes(state);
+      }
+
+      isOverlayState(state) {
+        return this.overlayStates.includes(state);
+      }
+
+      setState(newState, forceLoop = null) {
         if (!this.states.includes(newState)) {
           Logger.error(`Invalid state: ${newState}`);
           return;
         }
 
         const prevState = this.currentState;
+
+        // If transitioning from base state to overlay, save return state
+        if (this.isBaseState(prevState) && this.isOverlayState(newState)) {
+          this.previousBaseState = prevState;
+          Logger.state(`Saved return state: ${prevState}`);
+        }
+
         this.currentState = newState;
 
         Logger.state(`State transition: ${prevState || 'NONE'} -> ${newState}`);
@@ -392,12 +448,29 @@
         // Get animation for this state
         const animations = this.stateAnimations.get(newState);
         if (animations && animations.length > 0) {
-          // Play first animation for this state
+          // Determine if should loop
+          const shouldLoop = forceLoop !== null ? forceLoop : this.isBaseState(newState);
+
           if (this.onStateChange) {
-            this.onStateChange(animations[0]);
+            this.onStateChange(animations[0], shouldLoop);
           }
         } else {
           Logger.warn(`No animation found for state: ${newState}`);
+        }
+      }
+
+      // Called when an animation finishes
+      onAnimationFinished(animation) {
+        // Don't return from Deadout (stay dead)
+        if (this.currentState === 'Deadout') {
+          Logger.state('Deadout complete - staying dead');
+          return;
+        }
+
+        // Return to previous base state if we were in an overlay
+        if (this.isOverlayState(this.currentState)) {
+          Logger.state(`Overlay finished, returning to: ${this.previousBaseState}`);
+          this.setState(this.previousBaseState);
         }
       }
 
@@ -420,6 +493,7 @@
     // ==========================================
     class AnimationController {
       constructor() {
+        this.gr2 = null;
         this.animations = [];
         this.trackGroups = [];
         this.skeleton = null;
@@ -431,14 +505,15 @@
         this.isLooping = true;
         this.speed = 1.0;
         this.lastUpdateTime = 0;
+        this.onFinished = null; // Callback when animation finishes
       }
 
       loadFromFileInfo(gr2, fileInfo) {
+        this.gr2 = gr2;
         this.animations = [];
         this.trackGroups = [];
         this.bones = [];
 
-        // Load animations
         Logger.anim('='.repeat(50));
         Logger.anim('LOADING ANIMATIONS');
         Logger.anim('='.repeat(50));
@@ -446,43 +521,68 @@
         Logger.anim(`Animation count: ${fileInfo.AnimationCount}`);
         Logger.anim(`Track group count: ${fileInfo.TrackGroupCount}`);
 
-        // Parse animations
+        // Parse animations using manual offset reading
+        // granny_animation layout:
+        // +0: char* Name
+        // +4: float Duration
+        // +8: float TimeStep
+        // +12: float Oversampling
+        // +16: int TrackGroupCount
+        // +20: void* TrackGroups
         for (let i = 0; i < fileInfo.AnimationCount; i++) {
           try {
             const animPtr = gr2.runtime.get_dword_ptr(fileInfo.Animations + 4 * i);
-            const anim = Granny2.readStructure(gr2.runtime.cpu, animPtr, Granny2.structs.granny_animation);
+
+            const namePtr = MemHelper.readU32(gr2, animPtr + 0);
+            const duration = MemHelper.readF32(gr2, animPtr + 4);
+            const timeStep = MemHelper.readF32(gr2, animPtr + 8);
+            const oversampling = MemHelper.readF32(gr2, animPtr + 12);
+            const trackGroupCount = MemHelper.readU32(gr2, animPtr + 16);
+
+            const name = MemHelper.readStr(gr2, namePtr) || `Animation_${i}`;
 
             this.animations.push({
               index: i,
               ptr: animPtr,
-              name: anim.Name || `Animation_${i}`,
-              duration: anim.Duration,
-              timeStep: anim.TimeStep,
-              trackGroupCount: anim.TrackGroupCount,
-              data: anim
+              name,
+              duration,
+              timeStep,
+              oversampling,
+              trackGroupCount
             });
 
-            Logger.anim(`Animation ${i}: "${anim.Name}" (${anim.Duration.toFixed(2)}s, ${anim.TrackGroupCount} track groups)`);
+            Logger.anim(`Animation ${i}: "${name}" (${duration.toFixed(2)}s, TG=${trackGroupCount})`);
           } catch (e) {
             Logger.error(`Failed to read animation ${i}: ${e.message}`);
           }
         }
 
-        // Parse track groups
+        // Parse track groups using manual offset reading
+        // granny_track_group layout:
+        // +0: char* Name
+        // +4: int VectorTrackCount
+        // +8: void* VectorTracks
+        // +12: int TransformTrackCount
+        // +16: void* TransformTracks
         for (let i = 0; i < fileInfo.TrackGroupCount; i++) {
           try {
             const tgPtr = gr2.runtime.get_dword_ptr(fileInfo.TrackGroups + 4 * i);
-            const tg = Granny2.readStructure(gr2.runtime.cpu, tgPtr, Granny2.structs.granny_track_group);
+
+            const namePtr = MemHelper.readU32(gr2, tgPtr + 0);
+            const vectorTrackCount = MemHelper.readU32(gr2, tgPtr + 4);
+            const transformTrackCount = MemHelper.readU32(gr2, tgPtr + 12);
+
+            const name = MemHelper.readStr(gr2, namePtr) || `TrackGroup_${i}`;
 
             this.trackGroups.push({
               index: i,
               ptr: tgPtr,
-              name: tg.Name || `TrackGroup_${i}`,
-              transformTrackCount: tg.TransformTrackCount,
-              data: tg
+              name,
+              vectorTrackCount,
+              transformTrackCount
             });
 
-            Logger.anim(`TrackGroup ${i}: "${tg.Name}" (${tg.TransformTrackCount} transform tracks)`);
+            Logger.anim(`TrackGroup ${i}: "${name}" (VT=${vectorTrackCount}, TT=${transformTrackCount})`);
           } catch (e) {
             Logger.error(`Failed to read track group ${i}: ${e.message}`);
           }
@@ -510,39 +610,46 @@
         Logger.bone(`Bone count: ${skeleton.BoneCount}`);
 
         if (skeleton.BoneCount > 0 && skeleton.Bones) {
-          // Calculate bone structure size
-          const boneStructSize = this.calculateBoneStructSize();
-
+          // Bones is an array of POINTERS, not a contiguous block!
+          // granny_bone layout:
+          // +0: char* Name
+          // +4: int ParentIndex
+          // +8: granny_transform LocalTransform (68 bytes)
+          // +76: float[16] InverseWorld4x4 (64 bytes)
+          // +140: float LODError
+          // +144: int ExtendedData_Type
+          // +148: int ExtendedData_Object
           for (let i = 0; i < skeleton.BoneCount; i++) {
             try {
-              const bonePtr = skeleton.Bones + i * boneStructSize;
-              const bone = Granny2.readStructure(gr2.runtime.cpu, bonePtr, Granny2.structs.granny_bone);
+              // Get pointer to bone (array of pointers)
+              const bonePtr = gr2.runtime.get_dword_ptr(skeleton.Bones + 4 * i);
+
+              const namePtr = MemHelper.readU32(gr2, bonePtr + 0);
+              const parentIndex = MemHelper.readI32(gr2, bonePtr + 4);
+
+              const name = MemHelper.readStr(gr2, namePtr) || `Bone_${i}`;
 
               this.bones.push({
                 index: i,
                 ptr: bonePtr,
-                name: bone.Name || `Bone_${i}`,
-                parentIndex: bone.ParentIndex,
-                localTransform: bone.LocalTransform,
-                data: bone
+                name,
+                parentIndex
               });
 
-              const indent = '  '.repeat(this.getBoneDepth(i));
-              Logger.bone(`${indent}Bone ${i}: "${bone.Name}" (parent: ${bone.ParentIndex})`);
             } catch (e) {
               Logger.warn(`Failed to read bone ${i}: ${e.message}`);
             }
           }
         }
 
-        this.updateSkeletonUI();
-      }
+        // Log bone hierarchy
+        this.bones.forEach(bone => {
+          const indent = '  '.repeat(this.getBoneDepth(bone.index));
+          Logger.bone(`${indent}${bone.name} (${bone.index}, parent: ${bone.parentIndex})`);
+        });
 
-      calculateBoneStructSize() {
-        // granny_bone: char* + int + granny_transform + float[16] + float + int + int
-        // granny_transform: int + float[3] + float[4] + float[9] = 4 + 12 + 16 + 36 = 68 bytes
-        // Total: 4 + 4 + 68 + 64 + 4 + 4 + 4 = 152 bytes
-        return 152;
+        Logger.success(`Loaded ${this.bones.length}/${skeleton.BoneCount} bones`);
+        this.updateSkeletonUI();
       }
 
       getBoneDepth(boneIndex) {
@@ -573,17 +680,20 @@
         DOM.skeletonInfo.innerHTML = html;
       }
 
-      playAnimation(animation) {
+      playAnimation(animation, loop = true) {
         this.currentAnimation = animation;
         this.currentTime = 0;
         this.duration = animation.duration;
         this.isPlaying = true;
+        this.isLooping = loop;
         this.lastUpdateTime = performance.now();
 
-        Logger.anim(`Playing: "${animation.name}" (${animation.duration.toFixed(2)}s)`);
+        Logger.anim(`Playing: "${animation.name}" (${animation.duration.toFixed(2)}s, loop=${loop})`);
 
         this.updateTimelineUI();
         DOM.btnPlay.textContent = 'Pause';
+        DOM.btnLoop.textContent = 'Loop: ' + (loop ? 'ON' : 'OFF');
+        DOM.btnLoop.classList.toggle('active', loop);
         DOM.timelineAnimation.textContent = animation.name;
         DOM.timelineDuration.textContent = animation.duration.toFixed(2) + 's';
       }
@@ -603,6 +713,11 @@
             this.currentTime = this.duration;
             this.isPlaying = false;
             DOM.btnPlay.textContent = 'Play';
+
+            // Trigger onFinished callback
+            if (this.onFinished) {
+              this.onFinished(this.currentAnimation);
+            }
           }
         }
 
@@ -669,8 +784,16 @@
     const animController = new AnimationController();
     const stateMachine = new AnimationStateMachine();
 
-    stateMachine.onStateChange = (animation) => {
-      animController.playAnimation(animation);
+    // Connect state machine to animation controller
+    stateMachine.onStateChange = (animation, shouldLoop) => {
+      animController.playAnimation(animation, shouldLoop);
+      updateAnimationListUI();
+    };
+
+    // Connect animation controller to state machine for return-to-base logic
+    animController.onFinished = (animation) => {
+      Logger.anim(`Animation finished: "${animation.name}"`);
+      stateMachine.onAnimationFinished(animation);
       updateAnimationListUI();
     };
 
