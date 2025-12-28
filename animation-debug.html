@@ -1307,6 +1307,25 @@
       }
 
       scene.add(currentModel);
+
+      // Auto-center and fit model to camera
+      const box = new THREE.Box3().setFromObject(currentModel);
+      const center = box.getCenter(new THREE.Vector3());
+      const size = box.getSize(new THREE.Vector3());
+
+      Logger.info(`Model bounds: center=(${center.x.toFixed(1)}, ${center.y.toFixed(1)}, ${center.z.toFixed(1)}), size=(${size.x.toFixed(1)}, ${size.y.toFixed(1)}, ${size.z.toFixed(1)})`);
+
+      // Center the model
+      currentModel.position.sub(center);
+
+      // Adjust camera distance based on model size
+      const maxDim = Math.max(size.x, size.y, size.z);
+      const distance = maxDim * 2.5;
+      camera.position.set(distance, distance * 0.8, distance);
+      camera.lookAt(0, 0, 0);
+
+      Logger.info(`Camera positioned at distance: ${distance.toFixed(1)}`);
+
       needsRender = true;
 
       Logger.success(`Model rendered with ${meshCount} meshes`);
