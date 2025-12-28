@@ -132,6 +132,10 @@
       color: #ae4;
     }
 
+    .log-mesh {
+      color: #a4e;
+    }
+
     table {
       width: 100%;
       border-collapse: collapse;
@@ -417,7 +421,8 @@
       success: function (msg) { this.log(msg, 'success'); },
       anim: function (msg) { this.log(msg, 'anim'); },
       state: function (msg) { this.log(msg, 'state'); },
-      bone: function (msg) { this.log(msg, 'bone'); }
+      bone: function (msg) { this.log(msg, 'bone'); },
+      mesh: function (msg) { this.log(msg, 'mesh'); }
     };
 
     // ==========================================
@@ -766,22 +771,8 @@
         Logger.bone(`Bone count: ${skeleton.BoneCount}`);
 
         if (skeleton.BoneCount > 0 && skeleton.Bones) {
-          // skeleton.Bones is a pointer to a CONTIGUOUS BLOCK of bone structures
-          // granny_bone structure size = 152 bytes:
-          // +0: char* Name (4)
-          // +4: int ParentIndex (4)
-          // +8: granny_transform LocalTransform (68 = 4 + 12 + 16 + 36)
-          // +76: float[16] InverseWorld4x4 (64)
-          // +140: float LODError (4)
-          // +144: int ExtendedData_Variant_Type (4)
-          // +148: int ExtendedData_Variant_Object (4)
-          // Total: 152 bytes
-
-          const BONE_STRUCT_SIZE = 152;
           const bonesBasePtr = skeleton.Bones;
-
           Logger.bone(`Bones base ptr: 0x${bonesBasePtr.toString(16)}`);
-          Logger.bone(`Bone struct size: ${BONE_STRUCT_SIZE} bytes`);
 
           // Validate base pointer
           if (!MemHelper.isValidPtr(bonesBasePtr)) {
@@ -789,35 +780,44 @@
             return;
           }
 
+          // Use Granny2.readStructure to properly read bone structures
+          // This handles the correct structure size automatically
+          let currentPtr = bonesBasePtr;
+
           for (let i = 0; i < skeleton.BoneCount; i++) {
             try {
-              // Calculate bone address in contiguous array
-              const bonePtr = bonesBasePtr + (i * BONE_STRUCT_SIZE);
+              // Read bone using Granny2's structure resolver
+              const boneData = Granny2.readStructure(
+                gr2.runtime.cpu,
+                currentPtr,
+                Granny2.structs.granny_bone
+              );
 
-              const namePtr = MemHelper.readU32(gr2, bonePtr + 0);
-              const parentIndex = MemHelper.readI32(gr2, bonePtr + 4);
-
-              // Read local transform (at offset 8)
-              const transformFlags = MemHelper.readU32(gr2, bonePtr + 8);
-              const posX = MemHelper.readF32(gr2, bonePtr + 12);
-              const posY = MemHelper.readF32(gr2, bonePtr + 16);
-              const posZ = MemHelper.readF32(gr2, bonePtr + 20);
-
-              const name = MemHelper.readStr(gr2, namePtr) || `Bone_${i}`;
+              // Extract position from LocalTransform
+              const pos = boneData.LocalTransform ? boneData.LocalTransform.Position : [0, 0, 0];
 
               this.bones.push({
                 index: i,
-                ptr: bonePtr,
-                name,
-                parentIndex,
+                ptr: currentPtr,
+                name: boneData.Name || `Bone_${i}`,
+                parentIndex: boneData.ParentIndex,
                 localTransform: {
-                  flags: transformFlags,
-                  position: [posX, posY, posZ]
+                  flags: boneData.LocalTransform ? boneData.LocalTransform.Flags : 0,
+                  position: pos
                 }
               });
 
+              // Move to next bone using computed size
+              currentPtr += boneData._size;
+
+              // Log the computed bone size for first bone
+              if (i === 0) {
+                Logger.bone(`Bone struct size (computed): ${boneData._size} bytes`);
+              }
+
             } catch (e) {
               Logger.warn(`Failed to read bone ${i}: ${e.message}`);
+              break;
             }
           }
         }
@@ -825,8 +825,8 @@
         // Log bone hierarchy
         this.bones.forEach(bone => {
           const indent = '  '.repeat(this.getBoneDepth(bone.index));
-          const pos = bone.localTransform ? bone.localTransform.position : [0,0,0];
-          Logger.bone(`${indent}${bone.name} (idx=${bone.index}, parent=${bone.parentIndex}, pos=[${pos.map(p=>p.toFixed(2)).join(',')}])`);
+          const pos = bone.localTransform ? bone.localTransform.position : [0, 0, 0];
+          Logger.bone(`${indent}${bone.name} (idx=${bone.index}, parent=${bone.parentIndex}, pos=[${pos.map(p => p.toFixed(2)).join(',')}])`);
         });
 
         Logger.success(`Loaded ${this.bones.length}/${skeleton.BoneCount} bones`);
