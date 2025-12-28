@@ -766,29 +766,42 @@
         Logger.bone(`Bone count: ${skeleton.BoneCount}`);
 
         if (skeleton.BoneCount > 0 && skeleton.Bones) {
-          // skeleton.Bones is a pointer to an ARRAY OF POINTERS to bone structures
-          // Each entry in the array is a 4-byte pointer to a granny_bone struct
-          // granny_bone layout:
-          // +0: char* Name
-          // +4: int ParentIndex
-          // +8: granny_transform LocalTransform (68 bytes)
-          // ...
+          // skeleton.Bones is a pointer to a CONTIGUOUS BLOCK of bone structures
+          // granny_bone structure size = 152 bytes:
+          // +0: char* Name (4)
+          // +4: int ParentIndex (4)
+          // +8: granny_transform LocalTransform (68 = 4 + 12 + 16 + 36)
+          // +76: float[16] InverseWorld4x4 (64)
+          // +140: float LODError (4)
+          // +144: int ExtendedData_Variant_Type (4)
+          // +148: int ExtendedData_Variant_Object (4)
+          // Total: 152 bytes
 
-          Logger.bone(`Bones array ptr: 0x${skeleton.Bones.toString(16)}`);
+          const BONE_STRUCT_SIZE = 152;
+          const bonesBasePtr = skeleton.Bones;
+
+          Logger.bone(`Bones base ptr: 0x${bonesBasePtr.toString(16)}`);
+          Logger.bone(`Bone struct size: ${BONE_STRUCT_SIZE} bytes`);
+
+          // Validate base pointer
+          if (!MemHelper.isValidPtr(bonesBasePtr)) {
+            Logger.error(`Invalid bones base pointer: 0x${bonesBasePtr.toString(16)}`);
+            return;
+          }
 
           for (let i = 0; i < skeleton.BoneCount; i++) {
             try {
-              // Get pointer to bone from array of pointers
-              const bonePtr = gr2.runtime.get_dword_ptr(skeleton.Bones + 4 * i);
-
-              // Validate pointer before reading
-              if (!MemHelper.isValidPtr(bonePtr)) {
-                Logger.warn(`Bone ${i}: Invalid pointer 0x${bonePtr.toString(16)}`);
-                continue;
-              }
+              // Calculate bone address in contiguous array
+              const bonePtr = bonesBasePtr + (i * BONE_STRUCT_SIZE);
 
               const namePtr = MemHelper.readU32(gr2, bonePtr + 0);
               const parentIndex = MemHelper.readI32(gr2, bonePtr + 4);
+
+              // Read local transform (at offset 8)
+              const transformFlags = MemHelper.readU32(gr2, bonePtr + 8);
+              const posX = MemHelper.readF32(gr2, bonePtr + 12);
+              const posY = MemHelper.readF32(gr2, bonePtr + 16);
+              const posZ = MemHelper.readF32(gr2, bonePtr + 20);
 
               const name = MemHelper.readStr(gr2, namePtr) || `Bone_${i}`;
 
@@ -796,7 +809,11 @@
                 index: i,
                 ptr: bonePtr,
                 name,
-                parentIndex
+                parentIndex,
+                localTransform: {
+                  flags: transformFlags,
+                  position: [posX, posY, posZ]
+                }
               });
 
             } catch (e) {
@@ -808,7 +825,8 @@
         // Log bone hierarchy
         this.bones.forEach(bone => {
           const indent = '  '.repeat(this.getBoneDepth(bone.index));
-          Logger.bone(`${indent}${bone.name} (${bone.index}, parent: ${bone.parentIndex})`);
+          const pos = bone.localTransform ? bone.localTransform.position : [0,0,0];
+          Logger.bone(`${indent}${bone.name} (idx=${bone.index}, parent=${bone.parentIndex}, pos=[${pos.map(p=>p.toFixed(2)).join(',')}])`);
         });
 
         Logger.success(`Loaded ${this.bones.length}/${skeleton.BoneCount} bones`);
@@ -1128,52 +1146,168 @@
       }
     }
 
+    // Cleanup Three.js resources to prevent memory leaks
+    function disposeObject(obj) {
+      if (!obj) return;
+      obj.traverse((child) => {
+        if (child.geometry) {
+          child.geometry.dispose();
+        }
+        if (child.material) {
+          if (Array.isArray(child.material)) {
+            child.material.forEach(mat => {
+              if (mat.map) mat.map.dispose();
+              mat.dispose();
+            });
+          } else {
+            if (child.material.map) child.material.map.dispose();
+            child.material.dispose();
+          }
+        }
+      });
+    }
+
     function loadModelMesh(gr2, fileInfo) {
-      // Simplified mesh loading for visualization
+      Logger.info('='.repeat(50));
+      Logger.info('LOADING 3D MESH');
+      Logger.info('='.repeat(50));
+
       if (fileInfo.ModelCount === 0 || !fileInfo.Models || fileInfo.Models.length === 0) {
         Logger.warn('No models to render');
         return;
       }
 
+      // Clear previous model and dispose resources
       if (currentModel) {
+        disposeObject(currentModel);
         scene.remove(currentModel);
       }
 
       currentModel = new THREE.Group();
 
-      // Create a simple skeleton visualization
-      if (animController.bones.length > 0) {
-        const boneMaterial = new THREE.LineBasicMaterial({ color: 0x00ff00 });
-
-        animController.bones.forEach(bone => {
-          if (bone.parentIndex >= 0) {
-            const parent = animController.bones[bone.parentIndex];
-            if (parent && bone.localTransform && parent.localTransform) {
-              // Simple bone line visualization
-              const geometry = new THREE.BufferGeometry();
-              const positions = new Float32Array([
-                0, bone.index * 0.5, 0,
-                0, parent.index * 0.5, 0
-              ]);
-              geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
-              const line = new THREE.Line(geometry, boneMaterial);
-              currentModel.add(line);
-            }
-          }
-        });
+      // Build mesh lookup map for O(1) access
+      const meshLookup = new Map();
+      for (let k = 0; k < fileInfo.Meshes.length; k++) {
+        meshLookup.set(fileInfo.Meshes[k]._ptr, fileInfo.Meshes[k]);
       }
 
-      // Add a placeholder sphere to show model position
-      const sphereGeom = new THREE.SphereGeometry(2, 16, 16);
-      const sphereMat = new THREE.MeshLambertMaterial({ color: 0x4a9eff, wireframe: true });
-      const sphere = new THREE.Mesh(sphereGeom, sphereMat);
-      sphere.position.y = 10;
-      currentModel.add(sphere);
+      let meshCount = 0;
+
+      // Process each model
+      for (let i = 0; i < fileInfo.ModelCount; i++) {
+        const model = fileInfo.Models[i];
+        Logger.mesh(`Model ${i}: ${model.Name || 'unnamed'} (${model.MeshBindingsCount} mesh bindings)`);
+
+        for (let j = 0; j < model.MeshBindingsCount; j++) {
+          const meshPtr = model.MeshBindings[j]._ptr;
+          const mesh = meshLookup.get(meshPtr);
+
+          if (!mesh) {
+            Logger.warn(`Mesh not found for binding ${j}`);
+            continue;
+          }
+
+          Logger.mesh(`  Mesh ${j}: ${mesh.Name || 'unnamed'}`);
+
+          // Get vertices and indices
+          const vertexCount = gr2.GetMeshVertexCount(mesh._ptr);
+          const vertices = gr2.CopyMeshVertices(mesh._ptr);
+          const indices = gr2.CopyMeshIndices(mesh._ptr);
+          const indexCount = gr2.GetMeshIndexCount(mesh._ptr);
+
+          Logger.mesh(`    Vertices: ${vertexCount}, Indices: ${indexCount}`);
+
+          if (vertexCount === 0 || indexCount === 0) {
+            Logger.warn(`    Empty mesh, skipping`);
+            continue;
+          }
+
+          // Create Three.js geometry
+          const geometry = new THREE.BufferGeometry();
+          const floats = new Float32Array(vertices.buffer);
+
+          // Pre-allocate typed arrays
+          const positions = new Float32Array(vertexCount * 3);
+          const normals = new Float32Array(vertexCount * 3);
+          const uvs = new Float32Array(vertexCount * 2);
+
+          for (let v = 0; v < vertexCount; v++) {
+            const srcOffset = v * 8;
+            const posOffset = v * 3;
+            const uvOffset = v * 2;
+
+            // Position (X, Y, Z)
+            positions[posOffset] = floats[srcOffset];
+            positions[posOffset + 1] = floats[srcOffset + 1];
+            positions[posOffset + 2] = floats[srcOffset + 2];
+
+            // Normal (NX, NY, NZ)
+            normals[posOffset] = floats[srcOffset + 3];
+            normals[posOffset + 1] = floats[srcOffset + 4];
+            normals[posOffset + 2] = floats[srcOffset + 5];
+
+            // UV (U, 1-V) - flip V coordinate
+            uvs[uvOffset] = floats[srcOffset + 6];
+            uvs[uvOffset + 1] = 1.0 - floats[srcOffset + 7];
+          }
+
+          geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+          geometry.setAttribute('normal', new THREE.BufferAttribute(normals, 3));
+          geometry.setAttribute('uv', new THREE.BufferAttribute(uvs, 2));
+          geometry.setIndex(new THREE.BufferAttribute(new Uint16Array(indices.buffer), 1));
+          geometry.computeBoundingSphere();
+
+          // Create material (basic color since we're focused on animation)
+          const material = new THREE.MeshLambertMaterial({
+            color: 0x4a9eff,
+            side: THREE.DoubleSide
+          });
+
+          const threeMesh = new THREE.Mesh(geometry, material);
+          threeMesh.name = mesh.Name || `Mesh_${j}`;
+          currentModel.add(threeMesh);
+          meshCount++;
+        }
+      }
+
+      // Apply coordinate system transformation (GR2 -> Three.js)
+      const matrix = new THREE.Matrix4().set(
+        1, 0, 0, 0,
+        0, 0, 1, 0,
+        0, 1, 0, 0,
+        0, 0, 0, 1
+      );
+      currentModel.applyMatrix4(matrix);
+
+      // Add skeleton visualization if bones are loaded
+      if (animController.bones.length > 0) {
+        const skeletonGroup = new THREE.Group();
+        skeletonGroup.name = 'skeleton';
+
+        const boneMaterial = new THREE.LineBasicMaterial({ color: 0x00ff00 });
+        const jointMaterial = new THREE.MeshBasicMaterial({ color: 0xff0000 });
+
+        // Create bone connections and joints
+        animController.bones.forEach(bone => {
+          // Create joint sphere at bone position
+          if (bone.localTransform && bone.localTransform.position) {
+            const pos = bone.localTransform.position;
+            const jointGeom = new THREE.SphereGeometry(0.3, 8, 8);
+            const joint = new THREE.Mesh(jointGeom, jointMaterial);
+            joint.position.set(pos[0], pos[2], pos[1]); // Swap Y/Z for coordinate system
+            joint.name = `joint_${bone.name}`;
+            skeletonGroup.add(joint);
+          }
+        });
+
+        currentModel.add(skeletonGroup);
+        Logger.bone(`Added ${animController.bones.length} bone joints to visualization`);
+      }
 
       scene.add(currentModel);
       needsRender = true;
 
-      Logger.success('Model visualization created');
+      Logger.success(`Model rendered with ${meshCount} meshes`);
     }
 
     // Playback controls
