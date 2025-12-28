@@ -508,7 +508,9 @@
 
       loadAnimations(animations) {
         this.stateAnimations.clear();
+        this.allAnimations = animations;
 
+        // First try to map by name
         animations.forEach(anim => {
           const state = this.mapAnimationToState(anim.name);
           if (state) {
@@ -520,10 +522,34 @@
           }
         });
 
-        // Also add ALL animations as available even if not mapped to a state
+        // If no animations were mapped, use a default mapping strategy
+        // Assign first animation to Stop (idle) state
+        if (this.stateAnimations.size === 0 && animations.length > 0) {
+          Logger.warn(`No animations mapped by name. Using default assignment.`);
+
+          // First animation = Stop/Idle
+          this.stateAnimations.set('Stop', [animations[0]]);
+          Logger.state(`Default: "${animations[0].name}" -> Stop`);
+
+          // If there are more animations, try to distribute them
+          if (animations.length > 1) {
+            this.stateAnimations.set('Moveout', [animations[Math.min(1, animations.length - 1)]]);
+          }
+          if (animations.length > 2) {
+            this.stateAnimations.set('Attackout', [animations[Math.min(2, animations.length - 1)]]);
+          }
+          if (animations.length > 3) {
+            this.stateAnimations.set('Damageout', [animations[Math.min(3, animations.length - 1)]]);
+          }
+          if (animations.length > 4) {
+            this.stateAnimations.set('Deadout', [animations[Math.min(4, animations.length - 1)]]);
+          }
+        }
+
+        // Log unmapped animations
         animations.forEach(anim => {
           if (!this.mapAnimationToState(anim.name)) {
-            Logger.warn(`Unmapped animation: "${anim.name}" (still playable from list)`);
+            Logger.info(`Animation available: "${anim.name}" (${anim.duration.toFixed(2)}s)`);
           }
         });
       }
@@ -740,26 +766,20 @@
         Logger.bone(`Bone count: ${skeleton.BoneCount}`);
 
         if (skeleton.BoneCount > 0 && skeleton.Bones) {
-          // granny_bone structure size:
-          // +0: char* Name (4)
-          // +4: int ParentIndex (4)
-          // +8: granny_transform LocalTransform (4 + 12 + 16 + 36 = 68)
-          // +76: float[16] InverseWorld4x4 (64)
-          // +140: float LODError (4)
-          // +144: int ExtendedData_Type (4)
-          // +148: int ExtendedData_Object (4)
-          // Total: 152 bytes per bone
-          const BONE_STRUCT_SIZE = 152;
+          // skeleton.Bones is a pointer to an ARRAY OF POINTERS to bone structures
+          // Each entry in the array is a 4-byte pointer to a granny_bone struct
+          // granny_bone layout:
+          // +0: char* Name
+          // +4: int ParentIndex
+          // +8: granny_transform LocalTransform (68 bytes)
+          // ...
 
-          // skeleton.Bones is a pointer to a CONTIGUOUS block of bone structures
-          const bonesBasePtr = skeleton.Bones;
-
-          Logger.bone(`Bones base ptr: 0x${bonesBasePtr.toString(16)}`);
+          Logger.bone(`Bones array ptr: 0x${skeleton.Bones.toString(16)}`);
 
           for (let i = 0; i < skeleton.BoneCount; i++) {
             try {
-              // Calculate pointer to this bone in the contiguous block
-              const bonePtr = bonesBasePtr + i * BONE_STRUCT_SIZE;
+              // Get pointer to bone from array of pointers
+              const bonePtr = gr2.runtime.get_dword_ptr(skeleton.Bones + 4 * i);
 
               // Validate pointer before reading
               if (!MemHelper.isValidPtr(bonePtr)) {
