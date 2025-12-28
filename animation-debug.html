@@ -793,8 +793,9 @@
                 Granny2.structs.granny_bone
               );
 
-              // Extract position from LocalTransform
-              const pos = boneData.LocalTransform ? boneData.LocalTransform.Position : [0, 0, 0];
+              // Extract position from LocalTransform (with null checks)
+              const transform = boneData.LocalTransform;
+              const pos = (transform && transform.Position) ? transform.Position : [0, 0, 0];
 
               this.bones.push({
                 index: i,
@@ -802,7 +803,7 @@
                 name: boneData.Name || `Bone_${i}`,
                 parentIndex: boneData.ParentIndex,
                 localTransform: {
-                  flags: boneData.LocalTransform ? boneData.LocalTransform.Flags : 0,
+                  flags: transform ? (transform.Flags || 0) : 0,
                   position: pos
                 }
               });
@@ -825,8 +826,9 @@
         // Log bone hierarchy
         this.bones.forEach(bone => {
           const indent = '  '.repeat(this.getBoneDepth(bone.index));
-          const pos = bone.localTransform ? bone.localTransform.position : [0, 0, 0];
-          Logger.bone(`${indent}${bone.name} (idx=${bone.index}, parent=${bone.parentIndex}, pos=[${pos.map(p => p.toFixed(2)).join(',')}])`);
+          const pos = (bone.localTransform && bone.localTransform.position) || [0, 0, 0];
+          const posStr = Array.isArray(pos) ? pos.map(p => (p || 0).toFixed(2)).join(',') : '0,0,0';
+          Logger.bone(`${indent}${bone.name} (idx=${bone.index}, parent=${bone.parentIndex}, pos=[${posStr}])`);
         });
 
         Logger.success(`Loaded ${this.bones.length}/${skeleton.BoneCount} bones`);
