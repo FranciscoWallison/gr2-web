@@ -687,10 +687,9 @@
             const duration = MemHelper.readF32(gr2, animPtr + 4);
             const timeStep = MemHelper.readF32(gr2, animPtr + 8);
             const oversampling = MemHelper.readF32(gr2, animPtr + 12);
-            // DEPOIS (certo: +16 é ponteiro, +20 é count)
-            const trackGroupsPtr = MemHelper.readU32(gr2, animPtr + 16);
-            const trackGroupCount = MemHelper.readU32(gr2, animPtr + 20);
-
+            // +16 is TrackGroupCount (int), +20 is TrackGroups (pointer)
+            const trackGroupCount = MemHelper.readU32(gr2, animPtr + 16);
+            const trackGroupsPtr = MemHelper.readU32(gr2, animPtr + 20);
 
             const name = MemHelper.readStr(gr2, namePtr) || `Animation_${i}`;
 
@@ -702,8 +701,7 @@
               timeStep,
               oversampling,
               trackGroupCount,
-              trackGroupsPtr,
-              trackGroupCount
+              trackGroupsPtr
             });
 
             Logger.anim(`Animation ${i}: "${name}" (${duration.toFixed(2)}s, TG=${trackGroupCount})`);
@@ -759,6 +757,18 @@
         return this.animations;
       }
 
+      // Helper to check if a pointer looks like a valid bone structure
+      looksLikeBoneStruct(gr2, ptr, boneCount) {
+        if (!MemHelper.isValidPtr(ptr)) return false;
+        const namePtr = MemHelper.readU32(gr2, ptr + 0);
+        if (!MemHelper.isValidPtr(namePtr)) return false;
+        const name = MemHelper.readStr(gr2, namePtr, 64);
+        if (!name || name.length === 0) return false;
+        const parent = MemHelper.readI32(gr2, ptr + 4);
+        // Parent should be -1 (root) or a valid bone index
+        return parent >= -1 && parent < boneCount;
+      }
+
       loadSkeleton(gr2, skeleton) {
         Logger.bone('='.repeat(50));
         Logger.bone('LOADING SKELETON');
@@ -771,54 +781,94 @@
         Logger.bone(`Bone count: ${skeleton.BoneCount}`);
 
         if (skeleton.BoneCount > 0 && skeleton.Bones) {
-          const bonesBasePtr = skeleton.Bones;
-          Logger.bone(`Bones base ptr: 0x${bonesBasePtr.toString(16)}`);
+          const base = skeleton.Bones;
+          Logger.bone(`Bones base ptr: 0x${base.toString(16)}`);
 
           // Validate base pointer
-          if (!MemHelper.isValidPtr(bonesBasePtr)) {
-            Logger.error(`Invalid bones base pointer: 0x${bonesBasePtr.toString(16)}`);
+          if (!MemHelper.isValidPtr(base)) {
+            Logger.error(`Invalid bones base pointer: 0x${base.toString(16)}`);
             return;
           }
 
-          // Use Granny2.readStructure to properly read bone structures
-          // This handles the correct structure size automatically
-          let currentPtr = bonesBasePtr;
+          // Detect if Bones is an array of pointers (bone**) or contiguous block (bone*)
+          // Read first value and check if it looks like a pointer to a bone struct
+          const firstValue = MemHelper.readU32(gr2, base);
+          const isPtrArray = this.looksLikeBoneStruct(gr2, firstValue, skeleton.BoneCount);
 
-          for (let i = 0; i < skeleton.BoneCount; i++) {
-            try {
-              // Read bone using Granny2's structure resolver
-              const boneData = Granny2.readStructure(
-                gr2.runtime.cpu,
-                currentPtr,
-                Granny2.structs.granny_bone
-              );
+          Logger.bone(`Bones format: ${isPtrArray ? 'pointer array (bone**)' : 'contiguous block (bone*)'}`);
 
-              // Extract position from LocalTransform (with null checks)
-              const transform = boneData.LocalTransform;
-              const pos = (transform && transform.Position) ? transform.Position : [0, 0, 0];
+          if (isPtrArray) {
+            // Bones = bone** (array of pointers to bone structs)
+            for (let i = 0; i < skeleton.BoneCount; i++) {
+              try {
+                const bonePtr = MemHelper.readU32(gr2, base + 4 * i);
 
-              this.bones.push({
-                index: i,
-                ptr: currentPtr,
-                name: boneData.Name || `Bone_${i}`,
-                parentIndex: boneData.ParentIndex,
-                localTransform: {
-                  flags: transform ? (transform.Flags || 0) : 0,
-                  position: pos
+                if (!this.looksLikeBoneStruct(gr2, bonePtr, skeleton.BoneCount)) {
+                  Logger.warn(`Bone ${i}: Invalid pointer 0x${bonePtr.toString(16)}`);
+                  continue;
                 }
-              });
 
-              // Move to next bone using computed size
-              currentPtr += boneData._size;
+                const boneData = Granny2.readStructure(
+                  gr2.runtime.cpu,
+                  bonePtr,
+                  Granny2.structs.granny_bone
+                );
 
-              // Log the computed bone size for first bone
-              if (i === 0) {
-                Logger.bone(`Bone struct size (computed): ${boneData._size} bytes`);
+                const t = boneData.LocalTransform;
+                const pos = (t && t.Position) ? t.Position : [0, 0, 0];
+
+                this.bones.push({
+                  index: i,
+                  ptr: bonePtr,
+                  name: boneData.Name || `Bone_${i}`,
+                  parentIndex: boneData.ParentIndex,
+                  localTransform: {
+                    flags: t ? (t.Flags || 0) : 0,
+                    position: pos
+                  }
+                });
+
+              } catch (e) {
+                Logger.warn(`Failed to read bone ${i}: ${e.message}`);
               }
+            }
+          } else {
+            // Bones = bone* (contiguous block)
+            let currentPtr = base;
 
-            } catch (e) {
-              Logger.warn(`Failed to read bone ${i}: ${e.message}`);
-              break;
+            for (let i = 0; i < skeleton.BoneCount; i++) {
+              try {
+                const boneData = Granny2.readStructure(
+                  gr2.runtime.cpu,
+                  currentPtr,
+                  Granny2.structs.granny_bone
+                );
+
+                const t = boneData.LocalTransform;
+                const pos = (t && t.Position) ? t.Position : [0, 0, 0];
+
+                this.bones.push({
+                  index: i,
+                  ptr: currentPtr,
+                  name: boneData.Name || `Bone_${i}`,
+                  parentIndex: boneData.ParentIndex,
+                  localTransform: {
+                    flags: t ? (t.Flags || 0) : 0,
+                    position: pos
+                  }
+                });
+
+                // Log the computed bone size for first bone
+                if (i === 0) {
+                  Logger.bone(`Bone struct size (computed): ${boneData._size} bytes`);
+                }
+
+                currentPtr += boneData._size;
+
+              } catch (e) {
+                Logger.warn(`Failed to read bone ${i}: ${e.message}`);
+                break;
+              }
             }
           }
         }
