@@ -540,31 +540,17 @@
 		);
 
 		// Extract meshes
-		for (var i = 0; i < model.MeshBindingsCount; i++) {
-			var meshBinding = model.MeshBindings[i];
+		// OBS: Model.MeshBindings aqui não está batendo com FileInfo.Meshes (parser trata como array de ponteiros).
+		// Pra renderizar, usa direto a lista de meshes do arquivo.
+		for (var j = 0; j < fileInfo.Meshes.length; j++) {
+			var mesh = fileInfo.Meshes[j];
+			var meshPtr = mesh._ptr;
 
-			// Find the mesh in file info
-			var meshPtr = meshBinding.Mesh || meshBinding._ptr;
-			var mesh = null;
-			for (var j = 0; j < fileInfo.Meshes.length; j++) {
-				if (fileInfo.Meshes[j]._ptr === meshPtr) {
-					mesh = fileInfo.Meshes[j];
-					break;
-				}
-			}
-
-			if (!mesh) {
-				console.warn('[CharacterEntity] Mesh not found for binding', i);
-				continue;
-			}
-
-			// Get mesh data
 			var vertices = gr2.CopyMeshVertices(meshPtr);
 			var indices = gr2.CopyMeshIndices(meshPtr);
 			var vertexType = gr2.GetMeshVertexType(meshPtr);
 			var vertexCount = gr2.GetMeshVertexCount(meshPtr);
 
-			// Create mesh deformer for skinning
 			var deformer = gr2.NewMeshDeformer(vertexType);
 			var binding = gr2.NewMeshBinding(meshPtr, skeletonPtr, skeletonPtr);
 
@@ -581,6 +567,10 @@
 			this.meshBindings.push(binding);
 
 			console.log('[CharacterEntity] Mesh:', mesh.Name, 'Vertices:', vertexCount);
+		}
+
+		if (this.meshes.length === 0) {
+			throw new Error('Nenhuma mesh extraída (verifique parsing de FileInfo.Meshes)');
 		}
 
 		// Load animations from model file
