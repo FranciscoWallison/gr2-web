@@ -214,101 +214,106 @@
 			}
 		}
 
-		function createScene(vertices, indices, textures) {
-			// Parse vertices (PNT332 format: 3 pos + 3 normal + 2 uv)
-			var PNT332 = new Float32Array(vertices[0].buffer);
-			var vertexCount = PNT332.length / 8;
+		
+function createScene(vertices, indices, textures) {
+	// Parse vertices (PNT332 format: 3 pos + 3 normal + 2 uv)
+	if (!vertices || !vertices.length || !vertices[0]) {
+		throw new Error("Sem vertices para renderizar");
+	}
+	if (!indices || !indices.length || !indices[0]) {
+		throw new Error("Sem indices para renderizar");
+	}
 
-			geometry = new THREE.Geometry();
-			var vertexNormals = [];
-			var uvs = [];
+	var PNT332 = new Float32Array(vertices[0].buffer);
+	var vertexCount = (PNT332.length / 8) | 0;
 
-			for (var i = 0; i < vertexCount; i++) {
-				var vx = PNT332[i * 8 + 0];
-				var vy = PNT332[i * 8 + 1];
-				var vz = PNT332[i * 8 + 2];
-				var nx = PNT332[i * 8 + 3];
-				var ny = PNT332[i * 8 + 4];
-				var nz = PNT332[i * 8 + 5];
-				var tx = PNT332[i * 8 + 6];
-				var ty = PNT332[i * 8 + 7];
+	// Build BufferGeometry attributes
+	var positions = new Float32Array(vertexCount * 3);
+	var normals = new Float32Array(vertexCount * 3);
+	var uvs = new Float32Array(vertexCount * 2);
 
-				geometry.vertices.push(new THREE.Vector3(vx, vy, vz));
-				vertexNormals.push(new THREE.Vector3(nx, ny, nz));
-				uvs.push(new THREE.Vector2(tx, 1.0 - ty));
-			}
+	for (var i = 0; i < vertexCount; i++) {
+		positions[i * 3 + 0] = PNT332[i * 8 + 0];
+		positions[i * 3 + 1] = PNT332[i * 8 + 1];
+		positions[i * 3 + 2] = PNT332[i * 8 + 2];
 
-			// Process indices
-			var meshIndices = new Uint16Array(indices[0].buffer);
-			var triangleCount = meshIndices.length / 3;
+		normals[i * 3 + 0] = PNT332[i * 8 + 3];
+		normals[i * 3 + 1] = PNT332[i * 8 + 4];
+		normals[i * 3 + 2] = PNT332[i * 8 + 5];
 
-			for (var i = 0; i < triangleCount; i++) {
-				var a = meshIndices[i * 3 + 0];
-				var b = meshIndices[i * 3 + 1];
-				var c = meshIndices[i * 3 + 2];
+		uvs[i * 2 + 0] = PNT332[i * 8 + 6];
+		uvs[i * 2 + 1] = 1.0 - PNT332[i * 8 + 7]; // invert V
+	}
 
-				if (a >= geometry.vertices.length || b >= geometry.vertices.length || c >= geometry.vertices.length) {
-					continue;
-				}
+	// Indices (heuristic: try 16-bit first, fallback to 32-bit if needed)
+	var idxBuf = indices[0].buffer;
+	var indexArray = new Uint16Array(idxBuf);
 
-				var face = new THREE.Face3(a, b, c);
-				if (vertexNormals[a] && vertexNormals[b] && vertexNormals[c]) {
-					face.vertexNormals[0] = vertexNormals[a];
-					face.vertexNormals[1] = vertexNormals[b];
-					face.vertexNormals[2] = vertexNormals[c];
-				}
+	var maxIndex = 0;
+	for (var k = 0; k < indexArray.length; k++) {
+		if (indexArray[k] > maxIndex) maxIndex = indexArray[k];
+	}
 
-				geometry.faces.push(face);
-				if (uvs[a] && uvs[b] && uvs[c]) {
-					geometry.faceVertexUvs[0].push([uvs[a], uvs[b], uvs[c]]);
-				}
-			}
-
-			geometry.computeFaceNormals();
-			geometry.computeVertexNormals();
-
-			// Coordinate system conversion
-			geometry.applyMatrix(new THREE.Matrix4().set(
-				1, 0, 0, 0,
-				0, 0, 1, 0,
-				0, 1, 0, 0,
-				0, 0, 0, 1
-			));
-
-			// Create texture
-			var texture = new THREE.Texture(textures[0]);
-			texture.needsUpdate = true;
-
-			material = new THREE.MeshLambertMaterial({
-				color: 0xffffff,
-				map: texture,
-				side: THREE.BackSide
-			});
-
-			mesh3d = new THREE.Mesh(geometry, material);
-
-			// Scene setup
-			scene = new THREE.Scene();
-			scene.add(new THREE.AmbientLight(0x404040));
-
-			var light = new THREE.DirectionalLight(0xffffff, 0.5);
-			light.position.set(0, 20, -50);
-			scene.add(light);
-
-			scene.add(new THREE.AxisHelper(100));
-			scene.add(mesh3d);
-
-			// Camera
-			camera = new THREE.PerspectiveCamera(45, 800 / 600, 1, 10000);
-			camera.position.set(25, 35, 25);
-			camera.lookAt(new THREE.Vector3(0, 10, 0));
-
-			// Renderer
-			renderer = new THREE.WebGLRenderer({ antialias: true });
-			renderer.setSize(800, 600);
-			renderer.setClearColor(0x1a1a2e);
-			document.getElementById('render-container').appendChild(renderer.domElement);
+	if (maxIndex >= vertexCount && (idxBuf.byteLength % 4 === 0)) {
+		var as32 = new Uint32Array(idxBuf);
+		var max32 = 0;
+		for (var k2 = 0; k2 < as32.length; k2++) {
+			if (as32[k2] > max32) max32 = as32[k2];
 		}
+		if (max32 < vertexCount) {
+			indexArray = as32;
+		}
+	}
+
+	geometry = new THREE.BufferGeometry();
+	geometry.setAttribute("position", new THREE.BufferAttribute(positions, 3));
+	geometry.setAttribute("normal", new THREE.BufferAttribute(normals, 3));
+	geometry.setAttribute("uv", new THREE.BufferAttribute(uvs, 2));
+	geometry.setIndex(new THREE.BufferAttribute(indexArray, 1));
+
+	// Coordinate system conversion
+	geometry.applyMatrix4(new THREE.Matrix4().set(
+		1, 0, 0, 0,
+		0, 0, 1, 0,
+		0, 1, 0, 0,
+		0, 0, 0, 1
+	));
+	geometry.computeBoundingSphere();
+
+	// Texture (canvas)
+	var texture = new THREE.CanvasTexture(textures[0]);
+	texture.flipY = false; // UV já invertido acima
+
+	material = new THREE.MeshLambertMaterial({
+		color: 0xffffff,
+		map: texture,
+		side: THREE.DoubleSide
+	});
+
+	mesh3d = new THREE.Mesh(geometry, material);
+
+	// Scene setup
+	scene = new THREE.Scene();
+	scene.add(new THREE.AmbientLight(0x404040));
+
+	var light = new THREE.DirectionalLight(0xffffff, 0.5);
+	light.position.set(0, 20, -50);
+	scene.add(light);
+
+	scene.add(new THREE.AxesHelper(100));
+	scene.add(mesh3d);
+
+	// Camera
+	camera = new THREE.PerspectiveCamera(45, 800 / 600, 1, 10000);
+	camera.position.set(25, 35, 25);
+	camera.lookAt(new THREE.Vector3(0, 10, 0));
+
+	// Renderer
+	renderer = new THREE.WebGLRenderer({ antialias: true });
+	renderer.setSize(800, 600);
+	renderer.setClearColor(0x1a1a2e);
+	document.getElementById("render-container").appendChild(renderer.domElement);
+}
 
 		function animate() {
 			requestAnimationFrame(animate);

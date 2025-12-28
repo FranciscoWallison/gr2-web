@@ -127,6 +127,16 @@ function IO(memory)
      */
     this.register_read = function(port_addr, device, r8, r16, r32)
     {
+        // Compat: assinatura antiga register_read(port, r8[, r16[, r32]])
+        // (sem 'device') - usado por algumas versões do v86
+        if (typeof device === "function")
+        {
+            r32 = r16;
+            r16 = r8;
+            r8 = device;
+            device = this;
+        }
+
         dbg_assert(typeof port_addr === "number");
         dbg_assert(typeof device === "object");
         dbg_assert(!r8 || typeof r8 === "function");
@@ -160,6 +170,16 @@ function IO(memory)
      */
     this.register_write = function(port_addr, device, w8, w16, w32)
     {
+        // Compat: assinatura antiga register_write(port, w8[, w16[, w32]])
+        // (sem 'device') - usado por algumas versões do v86
+        if (typeof device === "function")
+        {
+            w32 = w16;
+            w16 = w8;
+            w8 = device;
+            device = this;
+        }
+
         dbg_assert(typeof port_addr === "number");
         dbg_assert(typeof device === "object");
         dbg_assert(!w8 || typeof w8 === "function");

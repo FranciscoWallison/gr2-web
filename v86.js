@@ -217,8 +217,8 @@ function v86()
         {
             // write seabios debug output to console
             var seabios_debug = "";
-            cpu.io.register_write(0x402, handle); // seabios
-            cpu.io.register_write(0x500, handle); // vgabios
+            cpu.io.register_write(0x402, debug, handle); // seabios
+            cpu.io.register_write(0x500, debug, handle); // vgabios
         }
         function handle(out_byte)
         {

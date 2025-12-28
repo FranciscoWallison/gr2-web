@@ -565,6 +565,8 @@
 		);
 
 		// Extract meshes - use the Meshes array from fileInfo directly
+		// OBS: Model.MeshBindings não está batendo com FileInfo.Meshes (parser trata como array de ponteiros).
+		// Pra renderizar, usa direto a lista de meshes do arquivo.
 		console.log('[CharacterEntity] Extracting meshes...');
 
 		for (var i = 0; i < fileInfo.MeshCount; i++) {
@@ -631,6 +633,10 @@
 		}
 
 		console.log('[CharacterEntity] Extracted', this.meshes.length, 'meshes');
+
+		if (this.meshes.length === 0) {
+			throw new Error('Nenhuma mesh extraída (verifique parsing de FileInfo.Meshes)');
+		}
 
 		// Load animations from model file
 		this._loadAnimations(fileInfoPtr);
